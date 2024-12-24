@@ -169,10 +169,11 @@ def main():
 
     stop_loss_price, take_profit_price = dynamic_stop_loss_take_profit(market_price, volatility)
 
-    if ema_short > ema_long and rsi < 30 and macd_line > signal_line:
+    # Adjusted RSI thresholds for a less restrictive strategy
+    if ema_short > ema_long and rsi < 40 and macd_line > signal_line:
         logging.info('Sinyal Beli yang kuat terdeteksi')
         place_order_with_sl_tp('buy', quantity, stop_loss_price, take_profit_price)
-    elif ema_short < ema_long and rsi > 70 and macd_line < signal_line:
+    elif ema_short < ema_long and rsi > 60 and macd_line < signal_line:
         logging.info('Sinyal Jual yang kuat terdeteksi')
         place_order_with_sl_tp('sell', quantity, stop_loss_price, take_profit_price)
     else:
