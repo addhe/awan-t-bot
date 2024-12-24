@@ -3,12 +3,14 @@ import os
 import logging
 import time
 import pandas as pd
+import requests
 from numpy import log, mean, std
 from logging.handlers import RotatingFileHandler
 
 # Konfigurasi Logging
 log_handler = RotatingFileHandler('trade_log.log', maxBytes=5*1024*1024, backupCount=2)
-logging.basicConfig(handlers=[log_handler], level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(handlers=[log_handler], level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Muat API_KEY dan API_SECRET dari variabel lingkungan
 API_KEY = os.environ.get('API_KEY_BINANCE')
@@ -36,11 +38,29 @@ CONFIG = {
     'max_positions': 5,
     'profit_target_percent': 0.01,  # 1% target profit
     'stop_loss_percent': 0.02,  # 2% stop loss
-    'timeframe': '5m',  # Menggunakan 5 menit sebagai contoh
+    'timeframe': '5m',
     'ema_short_period': 13,
     'ema_long_period': 26,
     'risk_percentage': 2  # Percent of balance to risk per trade
 }
+
+TELEGRAM_CONFIG = {
+    'bot_token': os.environ.get('TELEGRAM_BOT_TOKEN'),
+    'chat_id': os.environ.get('TELEGRAM_CHAT_ID')
+}
+
+def send_telegram_notification(message):
+    bot_token = TELEGRAM_CONFIG['bot_token']
+    chat_id = TELEGRAM_CONFIG['chat_id']
+    if bot_token and chat_id:
+        try:
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            payload = {"chat_id": chat_id, "text": message}
+            requests.post(url, json=payload)
+        except Exception as e:
+            logging.error(f'Error sending Telegram notification: {e}')
+    else:
+        logging.error('Telegram bot token or chat ID not set')
 
 def fetch_ohlcv(symbol, limit=50, timeframe='5m'):
     try:
@@ -86,13 +106,14 @@ def place_order_with_sl_tp(side, amount, stop_loss_price, take_profit_price):
                                       amount=amount)
         if order:
             logging.info(f'Order berhasil: {order}')
+            send_telegram_notification(f"Order {side.capitalize()} berhasil: {amount} {CONFIG['symbol']} at {order['price']}")
             # Set stop loss and take profit
             exchange.create_order(symbol=CONFIG['symbol'],
                                   type='stop_market',
                                   side='sell' if side == 'buy' else 'buy',
                                   amount=amount,
                                   params={'stopPx': stop_loss_price})
-            # Implementasi take profit tergantung pada logika order exchange khusus
+            # Handle take profit similarly
         return order
     except Exception as e:
         logging.error(f'Gagal membuat order dengan stop-loss dan take-profit: {e}')
