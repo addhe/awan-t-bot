@@ -74,15 +74,27 @@ def fetch_ohlcv(symbol, limit=50, timeframe='5m'):
     return None
 
 def calculate_indicators(df):
+    # Basic indicators
     df['ema_short'] = df['close'].ewm(span=CONFIG['ema_short_period'], adjust=False).mean()
     df['ema_long'] = df['close'].ewm(span=CONFIG['ema_long_period'], adjust=False).mean()
     df['macd'] = df['ema_short'] - df['ema_long']
     df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+
+    # RSI calculation
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['rsi'] = 100 - (100 / (1 + rs))
+
+    # Volume indicators
+    df['volume_ma'] = df['volume'].rolling(window=20).mean()
+    df['volume_ratio'] = df['volume'] / df['volume_ma']
+
+    # Price momentum
+    df['price_change'] = df['close'].pct_change()
+    df['momentum'] = df['price_change'].rolling(window=3).sum()
+
     return df
 
 def count_active_positions():
@@ -134,6 +146,7 @@ def calculate_position_size(balance, market_price):
     risk_amount = balance['USDT']['total'] * CONFIG['risk_percentage'] / 100
     return risk_amount / market_price
 
+
 def main():
     balance = exchange.fetch_balance()
     if balance['USDT']['free'] < 100:
@@ -151,33 +164,60 @@ def main():
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df = calculate_indicators(df)
 
-    market_price = df['close'].iloc[-1]
-    ema_short = df['ema_short'].iloc[-1]
-    ema_long = df['ema_long'].iloc[-1]
-    rsi = df['rsi'].iloc[-1]
-    macd_line = df['macd'].iloc[-1]
-    signal_line = df['signal'].iloc[-1]
+    # Get latest values
+    current_idx = -1
+    market_price = df['close'].iloc[current_idx]
+    ema_short = df['ema_short'].iloc[current_idx]
+    ema_long = df['ema_long'].iloc[current_idx]
+    rsi = df['rsi'].iloc[current_idx]
+    macd_line = df['macd'].iloc[current_idx]
+    signal_line = df['signal'].iloc[current_idx]
+    volume_ratio = df['volume_ratio'].iloc[current_idx]
+    momentum = df['momentum'].iloc[current_idx]
 
-    volatility = (max(df['high']) - min(df['low'])) / market_price  # Basic volatility metric
+    volatility = (df['high'].iloc[current_idx] - df['low'].iloc[current_idx]) / market_price
 
     if pd.isnull([ema_short, ema_long, rsi, macd_line, signal_line]).any():
         return
 
     quantity = calculate_position_size(balance, market_price)
-
-    logging.info(f'EMA Short: {ema_short}, EMA Long: {ema_long}, RSI: {rsi}, MACD: {macd_line}, Signal: {signal_line}, Harga Pasar: {market_price}')
-
     stop_loss_price, take_profit_price = dynamic_stop_loss_take_profit(market_price, volatility)
 
-    # Adjusted RSI thresholds for a less restrictive strategy
-    if ema_short > ema_long and rsi < 40 and macd_line > signal_line:
-        logging.info('Sinyal Beli yang kuat terdeteksi')
+    # More sensitive trading conditions
+    long_condition = (
+        ema_short > ema_long and  # Trend direction
+        (rsi < 45 or momentum > 0) and  # Either oversold OR positive momentum
+        macd_line > signal_line and  # MACD crossover
+        volume_ratio > 1.0  # Above average volume
+    )
+
+    short_condition = (
+        ema_short < ema_long and  # Trend direction
+        (rsi > 55 or momentum < 0) and  # Either overbought OR negative momentum
+        macd_line < signal_line and  # MACD crossover
+        volume_ratio > 1.0  # Above average volume
+    )
+
+    # Log current conditions
+    logging.info(
+        f'Market conditions:\n'
+        f'Price: {market_price:.2f}\n'
+        f'EMA Cross: {"Bullish" if ema_short > ema_long else "Bearish"}\n'
+        f'RSI: {rsi:.2f}\n'
+        f'MACD Signal: {"Bullish" if macd_line > signal_line else "Bearish"}\n'
+        f'Volume Ratio: {volume_ratio:.2f}\n'
+        f'Momentum: {momentum:.4f}'
+    )
+
+    if long_condition:
+        logging.info('LONG Signal Detected - Opening Buy Position')
         place_order_with_sl_tp('buy', quantity, stop_loss_price, take_profit_price)
-    elif ema_short < ema_long and rsi > 60 and macd_line < signal_line:
-        logging.info('Sinyal Jual yang kuat terdeteksi')
+    elif short_condition:
+        logging.info('SHORT Signal Detected - Opening Sell Position')
         place_order_with_sl_tp('sell', quantity, stop_loss_price, take_profit_price)
     else:
-        logging.info('Tidak ada sinyal trading yang jelas')
+        logging.info('Waiting for clearer signals...')
+
 
 if __name__ == '__main__':
     while True:
