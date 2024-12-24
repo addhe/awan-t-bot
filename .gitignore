@@ -1,1 +1,3 @@
 *.log
+.python-version
+performance_metrics.json
