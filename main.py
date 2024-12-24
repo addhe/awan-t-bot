@@ -88,7 +88,14 @@ def calculate_indicators(df):
 def count_active_positions():
     try:
         positions = exchange.fetch_positions([CONFIG['symbol']])
-        return len([p for p in positions if p['amount'] > 0])
+        # Debugging step: Log the positions fetched
+        logging.info(f'Fetched positions: {positions}')
+        
+        if len(positions) == 0:
+            return 0
+        
+        # Assume positions is a list of dictionaries, adjust this line based on debug output
+        return len([p for p in positions if p.get('amount', 0) > 0])
     except Exception as e:
         logging.error(f'Gagal mendapatkan posisi: {e}')
         return 0
