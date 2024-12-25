@@ -457,36 +457,20 @@ def calculate_min_order_size(exchange, symbol, market_price):
 
 def calculate_position_size(balance, entry_price, stop_loss, exchange, volatility):
     try:
-        # Base position size on risk management
+        # Risking 0.5% of the account balance
         risk_amount = balance['USDT']['free'] * (CONFIG['risk_percentage'] / 100)
         price_distance = abs(entry_price - stop_loss)
         position_size = (risk_amount / price_distance) * CONFIG['leverage']
 
-        # Adjust position size based on current volatility
-        if volatility > CONFIG['high_volatility_threshold']:
-            volatility_adjustment = CONFIG['high_volatility_adjustment']
-            position_size *= (1 - volatility_adjustment)  # Reduce size
-            logging.info(f"High volatility detected, reducing position size by {volatility_adjustment * 100}%")
-        elif volatility < CONFIG['low_volatility_threshold']:
-            volatility_adjustment = CONFIG['low_volatility_adjustment']
-            position_size *= (1 + volatility_adjustment)  # Increase size
-            logging.info(f"Low volatility detected, increasing position size by {volatility_adjustment * 100}%")
-
-        # Get minimum order size based on exchange
         min_size = calculate_min_order_size(exchange, CONFIG['symbol'], entry_price)
-        if min_size and position_size < min_size:
-            logging.info(f"Calculated position size ({position_size:.8f}) less than minimum ({min_size:.8f})")
-            return min_size
+        if position_size < min_size:
+            logging.info(f"Increasing position size to minimum size: {min_size:.8f}")
+            position_size = min_size
 
-        # Ensure position size doesn't exceed account limits
         max_position = (balance['USDT']['free'] * CONFIG['leverage'] * 0.95) / entry_price
         position_size = min(position_size, max_position)
 
-        # Round to appropriate decimal places
-        decimals = 3
-        position_size = round(position_size, decimals)
-
-        return position_size
+        return round(position_size, 3)
     except Exception as e:
         logging.error(f'Error calculating position size: {e}')
         raise
