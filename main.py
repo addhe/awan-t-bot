@@ -230,37 +230,76 @@ def monitor_positions(exchange):
     try:
         balance = exchange.fetch_balance()
         positions = exchange.fetch_positions([CONFIG['symbol']])
+        max_loss_per_position = balance['USDT']['total'] * CONFIG['max_loss_per_position'] / 100
+
         for position in positions:
             if float(position['contracts']) != 0:
                 entry_price = float(position['entryPrice'])
                 current_price = float(position['markPrice'])
-                unrealized_pnl = float(position['unrealizedPnl'])
                 position_size = float(position['contracts'])
 
+                # Calculate current profit/loss
+                pnl = (current_price - entry_price) * position_size
                 total_fee = position_size * entry_price * CONFIG['fee_rate'] * 2
-                actual_pnl = unrealized_pnl - total_fee
-                pnl_percentage = (actual_pnl / (entry_price * position_size)) * 100
+                actual_pnl = pnl - total_fee
 
                 position_info = (
                     f"Position Monitor:\n"
                     f"Size: {position_size}\n"
                     f"Entry: {entry_price:.2f}\n"
                     f"Current: {current_price:.2f}\n"
-                    f"P/L: {actual_pnl:.4f} USDT ({pnl_percentage:.2f}%)\n"
+                    f"P/L: {actual_pnl:.4f} USDT\n"
                     f"Fees: {total_fee:.4f} USDT"
                 )
 
                 logging.info(position_info)
                 send_telegram_notification(position_info)
 
-                # Emergency close logic, if needed
-                distance_to_liquidation = float(position['liquidationPrice']) - current_price
-                if abs(distance_to_liquidation / current_price) < 0.02:  # 2% from liquidation
-                    logging.critical("Position too close to liquidation, emergency closing")
-                    emergency_stop(exchange)
+                # Check if exceeding max loss and close the position if needed
+                if actual_pnl < -max_loss_per_position:
+                    logging.critical("Position exceeded max loss limit, closing position")
+                    close_position(exchange, position)
                 
     except Exception as e:
         logging.error(f'Error monitoring positions: {e}')
+
+def close_position(exchange, position):
+    try:
+        symbol = CONFIG['symbol']
+        position_size = abs(float(position['contracts']))
+        side = 'sell' if position['contracts'] > 0 else 'buy'  # Opened long if contracts > 0, close with sell; vice-versa
+
+        # Place an opposite order to close the position
+        order = exchange.create_order(
+            symbol=symbol,
+            type='market',
+            side=side,
+            amount=position_size
+        )
+        logging.info(f"Position closed: {side} {position_size} contracts for {symbol}")
+        send_telegram_notification(f"Position closed: {side} {position_size} contracts for {symbol}")
+
+    except Exception as e:
+        logging.error(f"Error closing position: {e}")
+
+def assess_risk_conditions(df, balance, exchange):
+    try:
+        # Define thresholds for reassessment
+        increased_volatility_threshold = CONFIG['re_evaluate_volatility_threshold']
+
+        # Check for increased volatility
+        if df['volatility'].iloc[-1] > increased_volatility_threshold:
+            logging.warning("Increased volatility detected, reassessing positions")
+            positions = exchange.fetch_positions([CONFIG['symbol']])
+            # If conditions are risky, consider closing or adjusting positions
+            for position in positions:
+                if float(position['contracts']) != 0:
+                    logging.info("Closing position due to adverse market condition")
+                    close_position(exchange, position)
+                    send_telegram_notification("Closing position due to adverse market condition")
+
+    except Exception as e:
+        logging.error(f'Error assessing risk conditions: {e}')
 
 def recover_from_error(exchange, error):
     """Attempt to recover from common errors"""
@@ -944,6 +983,12 @@ def main(performance):
 
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df = calculate_indicators(df)
+
+        # Re-evaluate risk based on updated conditions
+        assess_risk_conditions(df, balance, exchange)
+
+        # Monitor positions and manage risk
+        monitor_positions(exchange)
 
         current_idx = -1
         market_price = df['close'].iloc[current_idx]
