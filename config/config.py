@@ -28,4 +28,8 @@ CONFIG = {
     'vwap_period': 20,
     'initial_profit_for_trailing_stop': 0.01,  # 1% profit before trailing stop becomes active
     'trailing_distance_pct': 0.005,
+    'high_volatility_threshold': 0.05,      # 5% daily volatility considered high
+    'low_volatility_threshold': 0.02,       # 2% daily volatility considered low
+    'high_volatility_adjustment': 0.3,      # Reduce position size by 30% when high volatility
+    'low_volatility_adjustment': 0.2,       # Increase position size by 20% when low volatility
 }
