@@ -9,6 +9,15 @@ import requests
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, time as dt_time
 
+from config.config import CONFIG
+from src.modules.send_telegram_notification import send_telegram_notification
+from src.modules.initialize_exchange import initialize_exchange
+from src.modules.check_exchange_health import check_exchange_health
+from src.modules.cleanup_old_orders import cleanup_old_orders
+from src.modules.emergency_stop import emergency_stop
+
+exchange = None
+
 # Add after imports
 MIN_CCXT_VERSION = "4.0.0"
 try:
@@ -32,41 +41,6 @@ API_SECRET = os.environ.get('API_SECRET_BINANCE')
 if API_KEY is None or API_SECRET is None:
     logging.error('API credentials not found in environment variables')
     exit(1)
-
-CONFIG = {
-    'symbol': 'BTC/USDT',
-    'max_positions': 3,
-    'profit_target_percent': 0.015,  # 1.5%
-    'fee_rate': 0.0004,
-    'trailing_stop_percent': 0.003,  # 0.3%
-    'partial_tp_1': 0.7,
-    'partial_tp_2': 0.3,
-    'tp1_target': 0.01,  # 1%
-    'tp2_target': 0.02,  # 2%
-    'stop_loss_percent': 0.015,  # 1.5%
-    'timeframe': '1m',
-    'ema_short_period': 8,
-    'ema_long_period': 21,
-    'risk_percentage': 2,  # 2% dari balance
-    'leverage': 3,
-    'min_balance': 10,  # Turunkan ke $10
-    'funding_rate_threshold': 0.001,
-    # New config parameters
-    'max_daily_trades': 5,  # Kurangi jumlah trade
-    'max_daily_loss_percent': 3,  # Turunkan max loss
-    'max_drawdown_percent': 10,  # Turunkan max drawdown
-    'atr_period': 14,
-    'max_volatility_threshold': 3,
-    'min_volume_usdt': 10000,  # Turunkan ke 10,000 USDT
-    'excluded_hours': [0, 1, 23],
-    'max_atr_threshold': 0.5,
-    'vwap_period': 20,
-}
-
-TELEGRAM_CONFIG = {
-    'bot_token': os.environ.get('TELEGRAM_BOT_TOKEN'),
-    'chat_id': os.environ.get('TELEGRAM_CHAT_ID')
-}
 
 class PerformanceMetrics:
     def __init__(self):
@@ -162,49 +136,6 @@ class PerformanceMetrics:
 
         return True
 
-def emergency_stop(exchange):
-    try:
-        # Close all positions
-        positions = exchange.fetch_positions([CONFIG['symbol']])
-        for position in positions:
-            if float(position['contracts']) != 0:
-                side = 'sell' if float(position['contracts']) > 0 else 'buy'
-                exchange.create_market_order(
-                    symbol=CONFIG['symbol'],
-                    type='market',
-                    side=side,
-                    amount=abs(float(position['contracts'])),
-                    params={'reduceOnly': True}
-                )
-        
-        # Cancel all orders
-        cleanup_old_orders(exchange)
-        
-        logging.critical("Emergency stop executed")
-        return True
-    except Exception as e:
-        logging.error(f"Error in emergency stop: {e}")
-        return False
-
-def confirm_signal(df, side, current_idx):
-    try:
-        # Price action confirmation
-        last_candles = 3
-        if side == 'buy':
-            higher_lows = all(
-                df['low'].iloc[i] > df['low'].iloc[i-1]
-                for i in range(current_idx-last_candles+1, current_idx+1)
-            )
-            return higher_lows
-        else:
-            lower_highs = all(
-                df['high'].iloc[i] < df['high'].iloc[i-1]
-                for i in range(current_idx-last_candles+1, current_idx+1)
-            )
-            return lower_highs
-    except Exception as e:
-        logging.error(f"Error confirming signal: {e}")
-        return False
 
 def check_system_health():
     try:
@@ -231,7 +162,12 @@ def check_system_health():
 
 def check_signal_quality(df, side, current_idx):
     try:
-        # Check trend consistency
+        # Additional validation criteria example
+        if df['volatility'].iloc[current_idx] < 0.02:
+            logging.info('Volatility too low, skipping signal')
+            return False
+        
+        # Existing trend consistency checks
         last_candles = 3
         if side == 'buy':
             trend_consistent = all(
@@ -243,7 +179,7 @@ def check_signal_quality(df, side, current_idx):
                 df['close'].iloc[i] < df['ema_short'].iloc[i] 
                 for i in range(current_idx-last_candles, current_idx+1)
             )
-            
+        
         return trend_consistent
     except Exception as e:
         logging.error(f"Error checking signal quality: {e}")
@@ -270,28 +206,17 @@ def manage_position_risk(position_size, market_price, balance):
         return position_size
 
 def analyze_trading_performance(performance):
-    """Analyze trading performance metrics"""
     try:
         metrics = performance.metrics
         
-        # Calculate key metrics
-        win_rate = metrics['winning_trades'] / metrics['total_trades'] if metrics['total_trades'] > 0 else 0
-        avg_profit = metrics['total_profit'] / metrics['total_trades'] if metrics['total_trades'] > 0 else 0
-        max_drawdown = metrics['max_drawdown']
-        
-        # Calculate daily metrics
-        daily_pnl = {}
-        for trade in metrics['trade_history']:
-            date = trade['timestamp'].split('T')[0]
-            daily_pnl[date] = daily_pnl.get(date, 0) + trade['profit']
-        
+        # Calculate and log key metrics
         performance_summary = {
             'total_trades': metrics['total_trades'],
-            'win_rate': win_rate * 100,
-            'average_profit': avg_profit,
-            'max_drawdown': max_drawdown,
+            'win_rate': metrics.get('win_rate', 0),
+            'average_profit': metrics['total_profit'] / max(1, metrics['total_trades']),
+            'max_drawdown': metrics['max_drawdown'],
             'sharpe_ratio': metrics.get('sharpe_ratio', 0),
-            'daily_pnl': daily_pnl
+            'daily_pnl': metrics['trade_history'][-10:]  # Log the last 10 trades
         }
         
         logging.info(f"Performance Summary: {json.dumps(performance_summary, indent=2)}")
@@ -303,51 +228,39 @@ def analyze_trading_performance(performance):
 
 def monitor_positions(exchange):
     try:
-        balance = exchange.fetch_balance()  # Add this line
+        balance = exchange.fetch_balance()
         positions = exchange.fetch_positions([CONFIG['symbol']])
-        total_pnl = 0
-        total_margin_used = 0
-        
         for position in positions:
             if float(position['contracts']) != 0:
                 entry_price = float(position['entryPrice'])
                 current_price = float(position['markPrice'])
                 unrealized_pnl = float(position['unrealizedPnl'])
                 position_size = float(position['contracts'])
-                margin_used = float(position['initialMargin'])
-                
-                total_pnl += unrealized_pnl
-                total_margin_used += margin_used
 
-                # Calculate risk metrics
-                risk_ratio = margin_used / balance['USDT']['free']
+                total_fee = position_size * entry_price * CONFIG['fee_rate'] * 2
+                actual_pnl = unrealized_pnl - total_fee
+                pnl_percentage = (actual_pnl / (entry_price * position_size)) * 100
+
+                position_info = (
+                    f"Position Monitor:\n"
+                    f"Size: {position_size}\n"
+                    f"Entry: {entry_price:.2f}\n"
+                    f"Current: {current_price:.2f}\n"
+                    f"P/L: {actual_pnl:.4f} USDT ({pnl_percentage:.2f}%)\n"
+                    f"Fees: {total_fee:.4f} USDT"
+                )
+
+                logging.info(position_info)
+                send_telegram_notification(position_info)
+
+                # Emergency close logic, if needed
                 distance_to_liquidation = float(position['liquidationPrice']) - current_price
-                
-                position_info = {
-                    "size": position_size,
-                    "entry_price": entry_price,
-                    "current_price": current_price,
-                    "unrealized_pnl": unrealized_pnl,
-                    "margin_used": margin_used,
-                    "risk_ratio": risk_ratio,
-                    "liquidation_distance": distance_to_liquidation
-                }
-                
-                logging.info(f"Position Details: {json.dumps(position_info, indent=2)}")
-                
-                # Emergency close if too close to liquidation
-                if abs(distance_to_liquidation/current_price) < 0.02:  # 2% from liquidation
+                if abs(distance_to_liquidation / current_price) < 0.02:  # 2% from liquidation
                     logging.critical("Position too close to liquidation, emergency closing")
                     emergency_stop(exchange)
-                    
-        return {
-            "total_pnl": total_pnl,
-            "total_margin": total_margin_used
-        }
                 
     except Exception as e:
         logging.error(f'Error monitoring positions: {e}')
-        return None
 
 def recover_from_error(exchange, error):
     """Attempt to recover from common errors"""
@@ -411,17 +324,6 @@ def validate_config():
         logging.error(f"Config validation failed: {e}")
         return False
 
-def cleanup_old_orders(exchange):
-    try:
-        open_orders = exchange.fetch_open_orders(CONFIG['symbol'])
-        for order in open_orders:
-            try:
-                exchange.cancel_order(order['id'], CONFIG['symbol'])
-                logging.info(f"Cancelled old order {order['id']}")
-            except Exception as e:
-                logging.error(f"Error cancelling order {order['id']}: {e}")
-    except Exception as e:
-        logging.error(f"Error cleaning up orders: {e}")
 
 def evaluate_signal_strength(df, side, current_idx):
     try:
@@ -449,20 +351,6 @@ def evaluate_signal_strength(df, side, current_idx):
         
     except Exception as e:
         logging.error(f"Error evaluating signal strength: {e}")
-        return False
-
-def handle_exchange_error(e, retry_count=0):
-    error_msg = str(e)
-    if 'Rate limit' in error_msg:
-        sleep_time = (2 ** retry_count) * 10
-        logging.warning(f"Rate limit hit, sleeping for {sleep_time} seconds")
-        time.sleep(sleep_time)
-        return True
-    elif 'Invalid nonce' in error_msg:
-        logging.error("Time synchronization error")
-        return False
-    else:
-        logging.error(f"Exchange error: {error_msg}")
         return False
 
 def calculate_indicators(df):
@@ -577,10 +465,10 @@ def validate_order_size(position_size, market_price, balance):
 
 def check_market_conditions(df):
     try:
-        current_hour = datetime.now().hour
-        if current_hour in CONFIG['excluded_hours']:
-            logging.info('Trading not allowed during this hour')
-            return False
+        # current_hour = datetime.now().hour
+        # if current_hour in CONFIG['excluded_hours']:
+        #     logging.info('Trading not allowed during this hour')
+        #     return False
 
         # Volume check
         current_volume = df['volume'].iloc[-1] * df['close'].iloc[-1]
@@ -619,35 +507,6 @@ def check_existing_position(exchange, side):
         logging.error(f'Error checking existing position: {e}')
         return True
 
-def monitor_positions(exchange):
-    try:
-        positions = exchange.fetch_positions([CONFIG['symbol']])
-        for position in positions:
-            if float(position['contracts']) != 0:
-                entry_price = float(position['entryPrice'])
-                current_price = float(position['markPrice'])
-                unrealized_pnl = float(position['unrealizedPnl'])
-                position_size = float(position['contracts'])
-
-                total_fee = position_size * entry_price * CONFIG['fee_rate'] * 2
-                actual_pnl = unrealized_pnl - total_fee
-
-                pnl_percentage = (actual_pnl / (entry_price * position_size)) * 100
-
-                position_info = (
-                    f"Position Monitor:\n"
-                    f"Size: {position_size}\n"
-                    f"Entry: {entry_price:.2f}\n"
-                    f"Current: {current_price:.2f}\n"
-                    f"P/L: {actual_pnl:.4f} USDT ({pnl_percentage:.2f}%)\n"
-                    f"Fees: {total_fee:.4f} USDT"
-                )
-
-                logging.info(position_info)
-                send_telegram_notification(position_info)
-
-    except Exception as e:
-        logging.error(f'Error monitoring positions: {e}')
 
 def place_order_with_sl_tp(exchange, side, amount, market_price, stop_loss_price, take_profit_price):
     try:
@@ -665,6 +524,8 @@ def place_order_with_sl_tp(exchange, side, amount, market_price, stop_loss_price
 
         if order:
             entry_price = float(order['price'])
+
+            logging.info(f"Order Placed: {side.upper()}, Entry Price: {entry_price}")
 
             tp1_amount = amount * CONFIG['partial_tp_1']
             tp2_amount = amount * CONFIG['partial_tp_2']
@@ -731,21 +592,6 @@ def place_order_with_sl_tp(exchange, side, amount, market_price, stop_loss_price
         logging.error(f'Failed to place order with TP/SL: {e}')
         return None
 
-def initialize_exchange():
-    try:
-        exchange = ccxt.binance({
-            'apiKey': API_KEY,
-            'secret': API_SECRET,
-            'options': {'defaultType': 'future'}
-        })
-        exchange.set_sandbox_mode(True)  # Set ke False untuk live trading
-        exchange.load_markets()
-        logging.info("Markets loaded successfully")
-
-        return exchange
-    except Exception as e:
-        logging.error(f'Failed to initialize exchange: {e}')
-        raise
 
 def set_leverage(exchange):
     try:
@@ -820,18 +666,6 @@ def check_funding_rate(exchange, intended_side=None):
         logging.error(f'Error checking funding rate: {e}')
         return False
 
-def send_telegram_notification(message):
-    bot_token = TELEGRAM_CONFIG['bot_token']
-    chat_id = TELEGRAM_CONFIG['chat_id']
-    if bot_token and chat_id:
-        try:
-            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            payload = {"chat_id": chat_id, "text": message}
-            requests.post(url, json=payload)
-        except Exception as e:
-            logging.error(f'Error sending Telegram notification: {e}')
-    else:
-        logging.warning('Telegram bot token or chat ID not set')
 
 def fetch_ohlcv(exchange, symbol, limit=50, timeframe='1m'):
     try:
@@ -848,8 +682,8 @@ def fetch_ohlcv(exchange, symbol, limit=50, timeframe='1m'):
 def calculate_dynamic_stop_loss(df, side, market_price):
     atr = df['atr'].iloc[-1]
     if side == 'buy':
-        return market_price - (atr * 2)
-    return market_price + (atr * 2)
+        return market_price - (atr * 1.5)  # Tighter stop based on strategy
+    return market_price + (atr * 1.5)
 
 def check_market_health(df):
     try:
@@ -894,9 +728,11 @@ def check_risk_limits(performance):
         
     return True
 
+
 def log_market_conditions(df, market_health, market_data):
     try:
         market_info = {
+            'current_time': datetime.now().isoformat(),
             'price': df['close'].iloc[-1],
             'volume': df['volume'].iloc[-1],
             'rsi': df['rsi'].iloc[-1],
@@ -912,6 +748,7 @@ def log_market_conditions(df, market_health, market_data):
         logging.info(f"Market Conditions: {json.dumps(market_info, indent=2)}")
     except Exception as e:
         logging.error(f'Error logging market conditions: {e}')
+
 
 def validate_position_size(position_size, market_price, balance, min_order_size):
     try:
@@ -940,13 +777,10 @@ def handle_order_error(e, side, amount):
     error_msg = str(e)
     if 'insufficient balance' in error_msg.lower():
         logging.error(f"Insufficient balance for {side} order of {amount}")
-        return None
     elif 'minimum notional' in error_msg.lower():
         logging.error(f"Order amount too small: {amount}")
-        return None
     else:
         logging.error(f"Unknown order error: {error_msg}")
-        return None
 
 def update_performance_metrics(performance, trade_result):
     try:
@@ -1052,41 +886,57 @@ def check_trend_strength(df):
         logging.error(f"Error calculating trend strength: {e}")
         return False
 
-def main():
+# Call periodically instead of just in main()
+def periodic_performance_check(performance):
+    try:
+        performance_summary = analyze_trading_performance(performance)
+        logging.info(f"Periodic Performance Check: {performance_summary}")
+        if performance_summary['win_rate'] < 50:
+            logging.warning("Win rate below 50%, consider refining the strategy")
+    except Exception as e:
+        logging.error(f"Error during periodic performance analysis: {e}")
+
+
+def main(performance):
+    global exchange
     try:
         if not validate_config():
             logging.error("Configuration validation failed")
             return
-        # Initialize and validate basic setup
-        exchange = initialize_exchange()
-        set_leverage(exchange)
+
+        # Initialize the exchange only if not already initialized
+        if exchange is None:
+            exchange = initialize_exchange()
+            set_leverage(exchange)
+            
         performance = PerformanceMetrics()
+
+        # Health check before trading
+        check_exchange_health(exchange)
 
         # Check trading limits and risk management
         if not performance.can_trade() or not check_risk_limits(performance):
             logging.info("Trading limits reached or risk management restrictions")
             return
 
-        # Check balance
+        # Check account balance
         balance = exchange.fetch_balance()
         if balance['USDT']['free'] < CONFIG['min_balance']:
             logging.error(f"Insufficient balance: {balance['USDT']['free']} USDT")
             return
 
-        # Fetch and process market data - PINDAH KE SINI
+        # Fetch and process market data
         ohlcv = fetch_ohlcv(exchange, CONFIG['symbol'], timeframe=CONFIG['timeframe'])
         if ohlcv is None:
             return
 
-        # Process OHLCV data
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df = calculate_indicators(df)
 
-        # Get current market price and calculate min order size early
         current_idx = -1
         market_price = df['close'].iloc[current_idx]
         
-        # Calculate min order size - TAMBAHKAN INI
+        # Calculate min order size
         min_order_size = calculate_min_order_size(exchange, CONFIG['symbol'], market_price)
         if min_order_size is None:
             logging.error("Failed to calculate minimum order size")
@@ -1094,13 +944,8 @@ def main():
         
         logging.info(f"Current minimum order size: {min_order_size}")
 
-        # Check funding rate based on potential trade direction
-        side = None
-        if df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1]:
-            side = 'buy'
-        elif df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1]:
-            side = 'sell'
-        
+        # Check funding rate
+        side = 'buy' if df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1] else 'sell'
         if not check_funding_rate(exchange, side):
             return
 
@@ -1109,6 +954,7 @@ def main():
 
         # Market condition checks
         if not check_market_conditions(df):
+            logging.info("Market conditions not favorable for trading")
             return
 
         # Check market health
@@ -1119,12 +965,9 @@ def main():
         
         # Get market data updates
         market_data = update_market_data(df)
-        current_idx = -1
-        market_price = df['close'].iloc[current_idx]
-
         log_market_conditions(df, market_health, market_data)
 
-        # Enhanced trading signals with market health consideration
+        # Determine trading action based on signals
         long_condition = (
             df['ema_short'].iloc[current_idx] > df['ema_long'].iloc[current_idx] and
             df['close'].iloc[current_idx] > df['vwap'].iloc[current_idx] and
@@ -1150,102 +993,65 @@ def main():
         )
 
         if long_condition or short_condition:
-            try:
-                side = 'buy' if long_condition else 'sell'
-                # Additional checks
-                if not check_trend_strength(df):
-                    logging.info("Weak trend, skipping trade")
-                    return
-                    
-                if not analyze_market_depth(exchange, CONFIG['symbol'], side):
-                    logging.info("Poor market depth, skipping trade")
-                    return                
-                # Check signal quality
-                if not check_signal_quality(df, side, current_idx):
-                    logging.info("Signal quality check failed")
-                    return
+            side = 'buy' if long_condition else 'sell'
+            trading_decision = "Long" if long_condition else "Short"
+            logging.info(f"Evaluating conditions for {trading_decision} entry")
 
-                # Calculate position parameters
-                stop_loss = calculate_dynamic_stop_loss(df, side, market_price)
-                take_profit = market_price * (1 + CONFIG['profit_target_percent']) if side == 'buy' else market_price * (1 - CONFIG['profit_target_percent'])
-                position_size = calculate_position_size(balance, market_price, stop_loss, exchange)
+            # Additional checks before order placement
+            if not check_trend_strength(df):
+                logging.info("Weak trend, skipping trade")
+                return
                 
-                # Apply risk management
-                position_size = manage_position_risk(position_size, market_price, balance)
+            if not analyze_market_depth(exchange, CONFIG['symbol'], side):
+                logging.info("Poor market depth, skipping trade")
+                return
+                
+            if not check_signal_quality(df, side, current_idx):
+                logging.info("Signal quality check failed")
+                return
 
-                # Validate position size with combined checks
-                if not validate_position_size(position_size, market_price, balance, min_order_size):
-                    return
+            # Calculate position parameters
+            stop_loss = calculate_dynamic_stop_loss(df, side, market_price)
+            take_profit = market_price * (1 + CONFIG['profit_target_percent']) if side == 'buy' else market_price * (1 - CONFIG['profit_target_percent'])
 
-                # Validate order size
-                if not validate_order_size(position_size, market_price, balance):
-                    logging.info("Skipping trade due to invalid order size")
-                    return
+            position_size = calculate_position_size(balance, market_price, stop_loss, exchange)
+            position_size = manage_position_risk(position_size, market_price, balance)
 
-                position_size = limit_position_size(position_size, market_price, balance)
-                # Log detailed position info before placing order
-                position_value = position_size * market_price
-                margin_used = position_value / CONFIG['leverage']
+            # Validate position size
+            if not validate_position_size(position_size, market_price, balance, min_order_size):
+                return
 
-                position_details = (
-                    f"\nPosition Details:"
-                    f"\n- Size: {position_size:.8f}"
-                    f"\n- Value: {position_value:.2f} USDT"
-                    f"\n- Required Margin: {margin_used:.2f} USDT"
-                    f"\n- Available Balance: {balance['USDT']['free']:.2f} USDT"
-                    f"\n- Leverage: {CONFIG['leverage']}x"
-                    f"\n- Risk: {(margin_used / balance['USDT']['free']) * 100:.2f}%"
-                )
-                logging.info(position_details)
+            # Validate order size
+            if not validate_order_size(position_size, market_price, balance):
+                logging.info("Invalid order size, skipping trade")
+                return
 
-                # Prepare trade info for logging
-                trade_info = {
+            position_size = limit_position_size(position_size, market_price, balance)
+
+            # Place order
+            order = place_order_with_sl_tp(
+                exchange=exchange,
+                side=side,
+                amount=position_size,
+                market_price=market_price,
+                stop_loss_price=stop_loss,
+                take_profit_price=take_profit
+            )
+
+            if order:
+                trade_result = {
+                    'timestamp': datetime.now().isoformat(),
+                    'profit': 0,  # Initial trade entry
                     'side': side,
                     'entry_price': market_price,
-                    'stop_loss': stop_loss,
-                    'take_profit': take_profit,
                     'position_size': position_size,
-                    'market_conditions': {
-                        'trend': 'uptrend' if market_health['is_uptrend'] else 'downtrend',
-                        'volume_quality': 'good' if market_health['good_volume'] else 'poor',
-                        'support': market_data['support'],
-                        'resistance': market_data['resistance']
-                    }
+                    'fees': position_size * market_price * CONFIG['fee_rate']
                 }
-                
-                logging.info(f"Attempting to place {side} order: {trade_info}")
-
-                # Place the order with stop loss and take profit
-                order = place_order_with_sl_tp(
-                    exchange=exchange,
-                    side=side,
-                    amount=position_size,
-                    market_price=market_price,
-                    stop_loss_price=stop_loss,
-                    take_profit_price=take_profit
-                )
-
-                if order:
-                    # Update performance metrics
-                    trade_result = {
-                        'timestamp': datetime.now().isoformat(),
-                        'profit': 0,  # Initial entry
-                        'side': side,
-                        'entry_price': market_price,
-                        'position_size': position_size,
-                        'fees': position_size * market_price * CONFIG['fee_rate']
-                    }
-                    performance.update_trade(0)  # Initial trade entry
-                    update_performance_metrics(performance, trade_result)
-                    
-                    logging.info(f"Successfully placed {side} order with position size: {position_size}")
-                else:
-                    logging.error("Failed to place order")
-
-            except Exception as e:
-                handle_order_error(e, side, position_size)
-        else:
-            logging.info("No valid trading signals found")
+                performance.update_trade(0)  # Trade initially added
+                update_performance_metrics(performance, trade_result)
+                logging.info(f"{side.title()} order successfully placed with position size: {position_size}")
+            else:
+                logging.error("Failed to place order")
 
     except Exception as e:
         logging.error(f'Critical error in main loop: {str(e)}')
@@ -1255,7 +1061,8 @@ def main():
 if __name__ == '__main__':
     consecutive_errors = 0
     last_performance_analysis = datetime.now()
-    
+    performance = PerformanceMetrics()
+
     while True:
         try:
             # System health check
@@ -1273,7 +1080,7 @@ if __name__ == '__main__':
             if 'exchange' in locals():
                 cleanup_old_orders(exchange)
             
-            main()
+            main(performance)
             consecutive_errors = 0
             time.sleep(60)
             
