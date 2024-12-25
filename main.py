@@ -508,12 +508,13 @@ def check_existing_position(exchange, side):
         return True
 
 
-def place_order_with_sl_tp(exchange, side, amount, market_price, stop_loss_price, take_profit_price):
+def place_order_with_sl_tp(exchange, side, amount, market_price, initial_stop_loss_price, take_profit_price):
     try:
         entry_fee = amount * market_price * CONFIG['fee_rate']
         exit_fee = amount * take_profit_price * CONFIG['fee_rate']
         total_fees = entry_fee + exit_fee
 
+        # Place initial market order
         order = exchange.create_order(
             symbol=CONFIG['symbol'],
             type='market',
@@ -524,15 +525,15 @@ def place_order_with_sl_tp(exchange, side, amount, market_price, stop_loss_price
 
         if order:
             entry_price = float(order['price'])
-
             logging.info(f"Order Placed: {side.upper()}, Entry Price: {entry_price}")
 
+            # Calculate Take Profit Levels
             tp1_amount = amount * CONFIG['partial_tp_1']
             tp2_amount = amount * CONFIG['partial_tp_2']
-
             tp1_price = entry_price * (1 + CONFIG['tp1_target']) if side == 'buy' else entry_price * (1 - CONFIG['tp1_target'])
             tp2_price = entry_price * (1 + CONFIG['tp2_target']) if side == 'buy' else entry_price * (1 - CONFIG['tp2_target'])
 
+            # Place Take Profit Orders
             tp1_order = exchange.create_order(
                 symbol=CONFIG['symbol'],
                 type='TAKE_PROFIT_MARKET',
@@ -557,20 +558,23 @@ def place_order_with_sl_tp(exchange, side, amount, market_price, stop_loss_price
                 }
             )
 
-            activation_price = entry_price * (1 + CONFIG['trailing_stop_percent']) if side == 'buy' else entry_price * (1 - CONFIG['trailing_stop_percent'])
-
-            sl_order = exchange.create_order(
-                symbol=CONFIG['symbol'],
-                type='TRAILING_STOP_MARKET',
-                side='sell' if side == 'buy' else 'buy',
-                amount=amount,
-                params={
-                    'activationPrice': activation_price,
-                    'callbackRate': CONFIG['trailing_stop_percent'] * 100,
-                    'workingType': 'MARK_PRICE',
-                    'reduceOnly': True
-                }
-            )
+            # Calculate and place the adaptive trailing stop order
+            trailing_trigger_price = entry_price * (1 + CONFIG['initial_profit_for_trailing_stop']) if side == 'buy' else entry_price * (1 - CONFIG['initial_profit_for_trailing_stop'])
+            if market_price >= trailing_trigger_price:  # Check if initial profit level is reached
+                trailing_distance = CONFIG['trailing_distance_pct'] * entry_price
+                sl_order = exchange.create_order(
+                    symbol=CONFIG['symbol'],
+                    type='TRAILING_STOP_MARKET',
+                    side='sell' if side == 'buy' else 'buy',
+                    amount=amount,
+                    params={
+                        'activationPrice': trailing_trigger_price,
+                        'callbackRate': CONFIG['trailing_distance_pct'] * 100,
+                        'workingType': 'MARK_PRICE',
+                        'reduceOnly': True
+                    }
+                )
+                logging.info(f"Trailing Stop set to activate at {trailing_trigger_price}")
 
             order_info = (
                 f"New {side.upper()} position opened:\n"
@@ -578,20 +582,18 @@ def place_order_with_sl_tp(exchange, side, amount, market_price, stop_loss_price
                 f"Amount: {amount}\n"
                 f"TP1: {tp1_price:.2f} ({CONFIG['partial_tp_1']*100}%)\n"
                 f"TP2: {tp2_price:.2f} ({CONFIG['partial_tp_2']*100}%)\n"
-                f"Initial SL: {stop_loss_price:.2f}\n"
-                f"Trailing Stop Activation: {activation_price:.2f}\n"
+                f"Adaptive Trailing Stop: {trailing_trigger_price:.2f} if reached\n"
                 f"Estimated Fees: {total_fees:.4f} USDT"
             )
 
             logging.info(order_info)
             send_telegram_notification(order_info)
 
-            return order
+        return order
 
     except Exception as e:
         logging.error(f'Failed to place order with TP/SL: {e}')
         return None
-
 
 def set_leverage(exchange):
     try:

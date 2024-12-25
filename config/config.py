@@ -26,4 +26,6 @@ CONFIG = {
     'excluded_hours': [0, 1, 23],
     'max_atr_threshold': 0.5,
     'vwap_period': 20,
+    'initial_profit_for_trailing_stop': 0.01,  # 1% profit before trailing stop becomes active
+    'trailing_distance_pct': 0.005,
 }
