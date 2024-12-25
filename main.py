@@ -186,20 +186,17 @@ def check_signal_quality(df, side, current_idx):
         return False
 
 def manage_position_risk(position_size, market_price, balance):
-    """Add additional risk checks for position size"""
     try:
-        # Calculate position value and risk metrics
         position_value = position_size * market_price
-        account_value = balance['USDT']['free']
+        account_value = balance['USDT']['free'] + balance['USDT']['used']  # Consider margin
         risk_ratio = position_value / (account_value * CONFIG['leverage'])
-        
-        # Maximum position size as percentage of account
-        MAX_POSITION_PCT = 0.4  # 40% of account with leverage
+
+        MAX_POSITION_PCT = 0.2  # 20% of account with leverage
         if risk_ratio > MAX_POSITION_PCT:
             new_size = (account_value * MAX_POSITION_PCT * CONFIG['leverage']) / market_price
             logging.warning(f"Reducing position size from {position_size} to {new_size} due to risk limits")
             return new_size
-            
+
         return position_size
     except Exception as e:
         logging.error(f"Error in position risk management: {e}")
@@ -457,7 +454,7 @@ def calculate_min_order_size(exchange, symbol, market_price):
 
 def calculate_position_size(balance, entry_price, stop_loss, exchange, volatility):
     try:
-        # Risking 0.5% of the account balance
+        # Risk 0.5% of available balance
         risk_amount = balance['USDT']['free'] * (CONFIG['risk_percentage'] / 100)
         price_distance = abs(entry_price - stop_loss)
         position_size = (risk_amount / price_distance) * CONFIG['leverage']
@@ -470,7 +467,7 @@ def calculate_position_size(balance, entry_price, stop_loss, exchange, volatilit
         max_position = (balance['USDT']['free'] * CONFIG['leverage'] * 0.95) / entry_price
         position_size = min(position_size, max_position)
 
-        return round(position_size, 3)
+        return round(position_size, 3)  # Ideally match decimal precision of the symbol
     except Exception as e:
         logging.error(f'Error calculating position size: {e}')
         raise
@@ -710,6 +707,12 @@ def fetch_ohlcv(exchange, symbol, limit=50, timeframe='1m'):
         else:
             logging.error('Empty OHLCV data received')
             return None
+    except ccxt.NetworkError as e:
+        logging.error(f"Network error while fetching OHLCV data: {str(e)}")
+        return
+    except Exception as e:
+        logging.error(f"Unexpected error while fetching OHLCV data: {str(e)}")
+        return
     except Exception as e:
         logging.error(f'Failed to fetch OHLCV data: {e}')
         return None
@@ -1093,7 +1096,15 @@ def main(performance):
                 logging.info(f"{side.title()} order successfully placed with position size: {position_size}")
             else:
                 logging.error("Failed to place order")
-
+    except ccxt.NetworkError as e:
+        logging.error(f"Network error during exchange initialization: {str(e)}")
+        return
+    except ccxt.ExchangeError as e:
+        logging.error(f"Exchange error during exchange initialization: {str(e)}")
+        return
+    except Exception as e:
+        logging.error(f"Unexpected error during exchange initialization: {str(e)}")
+        return
     except Exception as e:
         logging.error(f'Critical error in main loop: {str(e)}')
         raise
