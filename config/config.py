@@ -10,8 +10,8 @@ CONFIG = {
     'tp2_target': 0.02,  # 2%
     'stop_loss_percent': 0.01,  # 1.5%
     'timeframe': '5m',
-    'ema_short_period': 8,
-    'ema_long_period': 21,
+    'ema_short_period': 5,
+    'ema_long_period': 15,
     'risk_percentage': 0.5,  # 2% dari balance
     'leverage': 2,
     'min_balance': 10,  # Turunkan ke $10
@@ -20,12 +20,12 @@ CONFIG = {
     'max_daily_trades': 5,  # Kurangi jumlah trade
     'max_daily_loss_percent': 3,  # Turunkan max loss
     'max_drawdown_percent': 5,  # Turunkan max drawdown
-    'atr_period': 14,
-    'max_volatility_threshold': 0.05,
+    'atr_period': 10,
+    'max_volatility_threshold': 0.04,
     'min_volume_usdt': 5000,  # Turunkan ke 10,000 USDT
     'excluded_hours': [0, 1, 23],
     'max_atr_threshold': 0.5,
-    'vwap_period': 20,
+    'vwap_period': 14,
     'initial_profit_for_trailing_stop': 0.01,  # 1% profit before trailing stop becomes active
     'trailing_distance_pct': 0.005,
     'high_volatility_threshold': 0.05,      # 5% daily volatility considered high

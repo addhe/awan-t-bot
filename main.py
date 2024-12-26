@@ -666,6 +666,7 @@ def set_leverage(exchange):
 
 def check_funding_rate(exchange, intended_side=None):
     try:
+        # Fetch current funding rate information
         funding_rate = exchange.fetch_funding_rate(CONFIG['symbol'])
         current_rate = funding_rate['fundingRate']
         next_funding = funding_rate['fundingTimestamp']
@@ -673,26 +674,39 @@ def check_funding_rate(exchange, intended_side=None):
 
         logging.info(f'Current Funding Rate: {current_rate:.6f}')
 
-        # Check if near funding time
+        # Check if near funding time to avoid entering positions close to settlement
         if abs(next_funding - current_time) < 5 * 60 * 1000:
-            logging.info('Skipping trade: Near funding time')
+            logging.info('Skipping trade: Near funding time.')
             return False
 
-        if intended_side:
-            if intended_side == 'buy' and current_rate > CONFIG['funding_rate_threshold']:
-                logging.info('Skipping LONG: Unfavorable funding rate')
+        # Evaluate based on intended side
+        if intended_side == 'buy':
+            if current_rate > CONFIG['funding_rate_threshold']:
+                logging.info('Skipping LONG: Unfavorable funding rate.')
                 return False
-            elif intended_side == 'sell' and current_rate < -CONFIG['funding_rate_threshold']:
-                logging.info('Skipping SHORT: Unfavorable funding rate')
-                return False
-        else:
-            # If no intended side, use original threshold check
-            if abs(current_rate) > CONFIG['funding_rate_threshold']:
-                logging.info('Skipping trade: Funding rate outside threshold')
-                return False
+            else:
+                logging.info('Favorable funding rate for LONG.')
+                return True
 
-        logging.info('Funding rate check passed')
+        elif intended_side == 'sell':
+            if current_rate < -CONFIG['funding_rate_threshold']:
+                logging.info('Skipping SHORT: Unfavorable funding rate.')
+                return False
+            else:
+                logging.info('Favorable funding rate for SHORT.')
+                return True
+
+        # General check if no specific side is provided
+        if abs(current_rate) > CONFIG['funding_rate_threshold']:
+            logging.info('Skipping trade: Funding rate outside threshold.')
+            return False
+
+        logging.info('Funding rate check passed.')
         return True
+
+    except Exception as e:
+        logging.error(f'Error checking funding rate: {e}')
+        return False
 
     except Exception as e:
         logging.error(f'Error checking funding rate: {e}')
@@ -725,21 +739,16 @@ def calculate_dynamic_stop_loss(df, side, market_price):
 
 def check_market_health(df):
     try:
-        # Trend strength
         ema_50 = df['close'].ewm(span=50, adjust=False).mean()
         ema_200 = df['close'].ewm(span=200, adjust=False).mean()
-
-        # Market trend
         is_uptrend = ema_50.iloc[-1] > ema_200.iloc[-1]
         price_above_ema = df['close'].iloc[-1] > ema_50.iloc[-1]
+        good_volume = df['volume'].iloc[-1] > df['volume'].mean()
 
-        # Volume trend
-        avg_volume = df['volume'].mean()
-        current_volume = df['volume'].iloc[-1]
-        good_volume = current_volume > avg_volume
-
+        # Allow flexibility in identifying market directions
         return {
             'is_uptrend': is_uptrend,
+            'trend_strength': 'strong' if abs(ema_50.iloc[-1] - ema_200.iloc[-1]) > threshold else 'weak',
             'price_above_ema': price_above_ema,
             'good_volume': good_volume
         }
@@ -1027,7 +1036,7 @@ def main(performance):
         short_condition = (
             df['ema_short'].iloc[current_idx] < df['ema_long'].iloc[current_idx] and
             df['close'].iloc[current_idx] < df['vwap'].iloc[current_idx] and
-            df['rsi'].iloc[current_idx] > 55 and
+            df['rsi'].iloc[current_idx] > 55 and  # Ensure the RSI threshold is appropriate
             df['macd'].iloc[current_idx] < df['signal'].iloc[current_idx] and
             df['volume_ratio'].iloc[current_idx] > 1.2 and
             not market_health['is_uptrend'] and
