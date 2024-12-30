@@ -32,3 +32,7 @@ Key parameters in `CONFIG`:
 - Performance tracking
 - Telegram notifications
 - Emergency stop function
+
+## Disclaimer
+
+Update 2024-12-30, testing on Papertrail Binance from 15k drops to 2k ( please don't use this code unless you know what you're doing )
