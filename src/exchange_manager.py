@@ -19,7 +19,7 @@ class ExchangeManager:
             if not api_key or not api_secret:
                 raise ValueError("API credentials not found in environment variables")
 
-            # Initialize exchange
+            # Initialize exchange with testnet settings
             self.exchange = ccxt.binance({
                 'apiKey': api_key,
                 'secret': api_secret,
@@ -27,92 +27,77 @@ class ExchangeManager:
                 'options': {
                     'defaultType': 'future',
                     'adjustForTimeDifference': True,
-                    'recvWindow': 60000
+                    'recvWindow': 60000,
+                    'test': True  # Enable testnet
+                },
+                'urls': {
+                    'api': {
+                        'public': 'https://testnet.binancefuture.com/fapi/v1',
+                        'private': 'https://testnet.binancefuture.com/fapi/v1',
+                    },
+                    'test': {
+                        'public': 'https://testnet.binancefuture.com/fapi/v1',
+                        'private': 'https://testnet.binancefuture.com/fapi/v1',
+                    }
                 }
             })
 
-            # Set up exchange-specific configurations
+            # Load markets to ensure connection works
             self.exchange.load_markets()
-            self.exchange.symbol = self.config['symbol']
 
-            # Set leverage
-            self._set_leverage()
+            # Set margin type to isolated
+            try:
+                self.exchange.fapiPrivatePostMarginType({
+                    'symbol': CONFIG['symbol'].replace('/', ''),
+                    'marginType': 'ISOLATED'
+                })
+                logging.info("Margin type set to isolated")
+            except Exception as e:
+                if 'already' not in str(e):
+                    logging.error(f"Error setting margin type: {e}")
+                    raise
 
-            # Set margin type
-            self._set_margin_type()
-
-            logging.info(f"Exchange initialized successfully for {self.config['symbol']}")
             return self.exchange
 
         except Exception as e:
             logging.critical(f"Failed to initialize exchange: {e}")
             raise
 
-    def _set_leverage(self) -> None:
+    def set_leverage(self, leverage: int) -> bool:
         """Set leverage for trading."""
         try:
             if not self.exchange:
                 raise ValueError("Exchange not initialized")
 
             self.exchange.fapiPrivatePostLeverage({
-                'symbol': self.exchange.market(self.config['symbol'])['id'],
-                'leverage': self.config['leverage']
+                'symbol': CONFIG['symbol'].replace('/', ''),
+                'leverage': leverage
             })
-            logging.info(f"Leverage set to {self.config['leverage']}x")
+            logging.info(f"Leverage set to {leverage}x")
+            return True
 
         except Exception as e:
             logging.error(f"Failed to set leverage: {e}")
-            raise
+            return False
 
-    def _set_margin_type(self) -> None:
-        """Set margin type to ISOLATED."""
+    def set_margin_type(self, margin_type: str = 'ISOLATED') -> bool:
+        """Set margin type for trading."""
         try:
             if not self.exchange:
                 raise ValueError("Exchange not initialized")
 
             self.exchange.fapiPrivatePostMarginType({
-                'symbol': self.exchange.market(self.config['symbol'])['id'],
-                'marginType': 'ISOLATED'
+                'symbol': CONFIG['symbol'].replace('/', ''),
+                'marginType': margin_type
             })
-            logging.info("Margin type set to ISOLATED")
-
-        except ccxt.ExchangeError as e:
-            if "No need to change margin type" not in str(e):
-                logging.error(f"Failed to set margin type: {e}")
-                raise
-        except Exception as e:
-            logging.error(f"Failed to set margin type: {e}")
-            raise
-
-    def validate_exchange_config(self) -> bool:
-        """Validate exchange configuration."""
-        try:
-            if not self.exchange:
-                return False
-
-            # Test API connectivity
-            self.exchange.fetch_balance()
-
-            # Verify market exists and is active
-            market = self.exchange.market(self.config['symbol'])
-            if not market['active']:
-                logging.error(f"Market {self.config['symbol']} is not active")
-                return False
-
-            # Verify trading is enabled
-            if not market.get('info', {}).get('trading', True):
-                logging.error(f"Trading is disabled for {self.config['symbol']}")
-                return False
-
+            logging.info(f"Margin type set to {margin_type}")
             return True
 
         except Exception as e:
-            logging.error(f"Exchange configuration validation failed: {e}")
-            return False
-
-    def get_exchange(self) -> Optional[ccxt.Exchange]:
-        """Get the initialized exchange instance."""
-        return self.exchange
+            if 'already' not in str(e):
+                logging.error(f"Failed to set margin type: {e}")
+                return False
+            return True
 
 def initialize_exchange() -> Optional[ccxt.Exchange]:
     """
