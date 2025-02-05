@@ -3,6 +3,8 @@ import logging
 import ccxt
 from typing import Optional, Dict, Any
 
+from config import CONFIG
+
 class ExchangeManager:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -49,21 +51,38 @@ class ExchangeManager:
     def _set_leverage(self) -> None:
         """Set leverage for trading."""
         try:
-            self.exchange.set_leverage(self.config['leverage'], self.config['symbol'])
+            if not self.exchange:
+                raise ValueError("Exchange not initialized")
+
+            self.exchange.fapiPrivatePostLeverage({
+                'symbol': self.exchange.market(self.config['symbol'])['id'],
+                'leverage': self.config['leverage']
+            })
             logging.info(f"Leverage set to {self.config['leverage']}x")
+
         except Exception as e:
-            logging.error(f"Error setting leverage: {e}")
+            logging.error(f"Failed to set leverage: {e}")
             raise
 
     def _set_margin_type(self) -> None:
-        """Set margin type to isolated."""
+        """Set margin type to ISOLATED."""
         try:
-            self.exchange.set_margin_mode('isolated', self.config['symbol'])
-            logging.info("Margin type set to isolated")
-        except Exception as e:
-            if 'already' not in str(e).lower():
-                logging.error(f"Error setting margin type: {e}")
+            if not self.exchange:
+                raise ValueError("Exchange not initialized")
+
+            self.exchange.fapiPrivatePostMarginType({
+                'symbol': self.exchange.market(self.config['symbol'])['id'],
+                'marginType': 'ISOLATED'
+            })
+            logging.info("Margin type set to ISOLATED")
+
+        except ccxt.ExchangeError as e:
+            if "No need to change margin type" not in str(e):
+                logging.error(f"Failed to set margin type: {e}")
                 raise
+        except Exception as e:
+            logging.error(f"Failed to set margin type: {e}")
+            raise
 
     def validate_exchange_config(self) -> bool:
         """Validate exchange configuration."""
@@ -94,3 +113,18 @@ class ExchangeManager:
     def get_exchange(self) -> Optional[ccxt.Exchange]:
         """Get the initialized exchange instance."""
         return self.exchange
+
+def initialize_exchange() -> Optional[ccxt.Exchange]:
+    """
+    Initialize and return the exchange instance.
+    This is a convenience function that uses ExchangeManager internally.
+
+    Returns:
+        ccxt.Exchange: Initialized exchange instance
+    """
+    try:
+        manager = ExchangeManager(CONFIG)
+        return manager.initialize_exchange()
+    except Exception as e:
+        logging.error(f"Failed to initialize exchange: {e}")
+        return None
