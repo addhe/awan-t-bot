@@ -3,10 +3,11 @@ import os
 import logging
 import time
 from logging.handlers import RotatingFileHandler
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
 
-from config.config import CONFIG
-from src.system_monitor import send_telegram_notification
+from config import CONFIG
+from src.system_monitor import SystemMonitor, send_telegram_notification
 from src.exchange_manager import initialize_exchange
 
 # Import refactored modules
@@ -27,7 +28,8 @@ from src.order_manager import (
     place_order_with_sl_tp,
     set_leverage,
     check_funding_rate,
-    close_position
+    close_position,
+    cleanup_old_orders
 )
 from src.performance_tracker import (
     PerformanceMetrics,
@@ -49,24 +51,80 @@ from src.utils import (
 )
 
 # Logging setup
-log_handler = RotatingFileHandler('trade_log.log', maxBytes=5*1024*1024, backupCount=2)
-logging.basicConfig(handlers=[log_handler], level=logging.INFO,
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+os.makedirs('logs', exist_ok=True)
+log_handler = RotatingFileHandler('logs/trade_log.log', maxBytes=5*1024*1024, backupCount=2)
+logging.basicConfig(
+    handlers=[log_handler],
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
-# API Configuration
-API_KEY = os.environ.get('API_KEY_BINANCE')
-API_SECRET = os.environ.get('API_SECRET_BINANCE')
+def monitor_positions(exchange: ccxt.Exchange) -> None:
+    """Monitor and manage open positions."""
+    try:
+        positions = exchange.fetch_positions([CONFIG['symbol']])
+        for position in positions:
+            if float(position['contracts']) > 0:
+                # Check if we need to adjust stop loss
+                current_price = float(position['markPrice'])
+                entry_price = float(position['entryPrice'])
+                side = position['side']
 
-if API_KEY is None or API_SECRET is None:
-    logging.error('API credentials not found in environment variables')
-    exit(1)
+                # Calculate current profit
+                profit_pct = ((current_price - entry_price) / entry_price) * 100
+                if side == 'short':
+                    profit_pct = -profit_pct
 
-def main(performance):
+                # Adjust stop loss if in profit
+                if profit_pct > CONFIG['initial_profit_for_trailing_stop']:
+                    new_sl = calculate_dynamic_stop_loss(None, side, current_price)
+                    manage_position_risk(exchange, position, new_sl)
+
+                # Log position status
+                logging.info(f"Position {side} - Entry: {entry_price}, Current: {current_price}, Profit: {profit_pct}%")
+
+    except Exception as e:
+        logging.error(f"Error monitoring positions: {e}")
+
+def emergency_stop(performance: PerformanceMetrics) -> bool:
+    """Check if emergency stop conditions are met."""
+    try:
+        # Check daily loss limit
+        if performance.daily_loss_percentage() >= CONFIG['max_daily_loss_percent']:
+            logging.warning(f"Daily loss limit reached: {performance.daily_loss_percentage()}%")
+            send_telegram_notification("🚨 Emergency Stop: Daily loss limit reached")
+            return True
+
+        # Check drawdown limit
+        if performance.max_drawdown() >= CONFIG['max_drawdown_percent']:
+            logging.warning(f"Max drawdown limit reached: {performance.max_drawdown()}%")
+            send_telegram_notification("🚨 Emergency Stop: Max drawdown limit reached")
+            return True
+
+        # Check consecutive losses
+        if performance.consecutive_losses >= 3:
+            logging.warning("Emergency Stop: Too many consecutive losses")
+            send_telegram_notification("🚨 Emergency Stop: Too many consecutive losses")
+            return True
+
+        return False
+
+    except Exception as e:
+        logging.error(f"Error in emergency stop check: {e}")
+        return True
+
+def main(performance: PerformanceMetrics) -> None:
     try:
         # Initialize exchange
         exchange = initialize_exchange()
         if not exchange:
             raise Exception("Failed to initialize exchange")
+
+        # Initialize system monitor
+        system_monitor = SystemMonitor(exchange, CONFIG)
+
+        # Send startup notification
+        send_telegram_notification("🟢 Trading bot started")
 
         # Validate configuration
         if not validate_config():
@@ -76,20 +134,21 @@ def main(performance):
         system_health = check_system_health()
         if not system_health['overall_healthy']:
             logging.warning("System health issues detected")
+            system_monitor.send_notification("⚠️ System health issues detected")
 
         # Set leverage
         if not set_leverage(exchange):
             raise Exception("Failed to set leverage")
 
         # Check exchange health
-        if not check_exchange_health(exchange):
+        if not system_monitor.check_exchange_health():
             raise Exception("Exchange health check failed")
 
         # Main trading loop
         while True:
             try:
                 # Fetch market data
-                df = fetch_ohlcv(exchange, exchange.symbol)
+                df = fetch_ohlcv(exchange, CONFIG['symbol'])
                 df = calculate_indicators(df)
 
                 # Update market data
@@ -108,6 +167,13 @@ def main(performance):
                     time.sleep(60)
                     continue
 
+                # Check if we're in excluded hours
+                current_hour = datetime.utcnow().hour
+                if current_hour in CONFIG['excluded_hours']:
+                    logging.info(f"Current hour {current_hour} is excluded from trading")
+                    time.sleep(300)  # Sleep for 5 minutes
+                    continue
+
                 # Check funding rate
                 funding_info = check_funding_rate(exchange)
                 if funding_info['should_wait']:
@@ -116,7 +182,7 @@ def main(performance):
                     continue
 
                 # Analyze market depth
-                depth_analysis = analyze_market_depth(exchange, exchange.symbol, 'buy')
+                depth_analysis = analyze_market_depth(exchange, CONFIG['symbol'], 'buy')
 
                 # Determine trading decision based on conditions
                 if market_conditions['trend'] == 'up' and trend_strength['trend_strength'] > 25:
@@ -131,7 +197,7 @@ def main(performance):
                     )
 
                     # Validate position size
-                    min_order_size = calculate_min_order_size(exchange, exchange.symbol, market_data['current_price'])
+                    min_order_size = calculate_min_order_size(exchange, CONFIG['symbol'], market_data['current_price'])
                     is_valid, validation_message = validate_position_size(position_size, market_data['current_price'], balance, min_order_size)
 
                     if not is_valid:
@@ -146,7 +212,7 @@ def main(performance):
 
                     # Place orders
                     stop_loss_price = calculate_dynamic_stop_loss(df, 'buy', market_data['current_price'])
-                    take_profit_price = market_data['current_price'] * 1.02  # 2% take profit
+                    take_profit_price = market_data['current_price'] * (1 + CONFIG['tp1_target'])
 
                     orders = place_order_with_sl_tp(
                         exchange,
@@ -156,6 +222,15 @@ def main(performance):
                         stop_loss_price,
                         take_profit_price
                     )
+
+                    if orders['success']:
+                        send_telegram_notification(
+                            f"🟢 New LONG position opened\n"
+                            f"Price: {market_data['current_price']}\n"
+                            f"Size: {position_size}\n"
+                            f"SL: {stop_loss_price}\n"
+                            f"TP: {take_profit_price}"
+                        )
 
                     # Update performance metrics
                     performance.update_trade(0, False)  # Initial trade entry
@@ -182,7 +257,7 @@ def main(performance):
 
     except Exception as e:
         logging.error(f"Critical error: {e}")
-        send_telegram_notification(f"Bot stopped due to critical error: {e}")
+        send_telegram_notification(f"🔴 Bot stopped due to critical error: {e}")
         raise
 
 if __name__ == '__main__':
@@ -193,17 +268,19 @@ if __name__ == '__main__':
     while True:
         try:
             main(performance)
+            consecutive_errors = 0  # Reset error count on successful run
         except Exception as e:
             consecutive_errors += 1
-            logging.error(f"Main loop error (attempt {consecutive_errors}): {e}")
+            logging.error(f"Bot error (attempt {consecutive_errors}): {e}")
 
             if consecutive_errors >= 3:
-                send_telegram_notification("Bot stopped after 3 consecutive errors")
+                send_telegram_notification(
+                    f"🔴 Bot stopped after {consecutive_errors} consecutive errors\n"
+                    f"Last error: {str(e)}"
+                )
                 break
 
-            success, message = recover_from_error(None, e)
-            if not success:
-                send_telegram_notification(f"Unrecoverable error: {message}")
-                break
-
-            time.sleep(300)
+            # Wait before retrying, with exponential backoff
+            wait_time = min(300 * (2 ** (consecutive_errors - 1)), 3600)  # Max 1 hour
+            logging.info(f"Waiting {wait_time} seconds before retry...")
+            time.sleep(wait_time)

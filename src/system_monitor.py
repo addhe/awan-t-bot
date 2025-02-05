@@ -17,6 +17,33 @@ class TelegramConfig:
             chat_id=os.environ.get('TELEGRAM_CHAT_ID', '')
         )
 
+def send_telegram_notification(message: str) -> bool:
+    """Send notification via Telegram."""
+    try:
+        config = TelegramConfig.from_env()
+        if not config.bot_token or not config.chat_id:
+            logging.error("Telegram configuration missing")
+            return False
+
+        url = f"https://api.telegram.org/bot{config.bot_token}/sendMessage"
+        payload = {
+            "chat_id": config.chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            logging.info(f"Telegram notification sent: {message}")
+            return True
+        else:
+            logging.error(f"Failed to send Telegram notification: {response.text}")
+            return False
+
+    except Exception as e:
+        logging.error(f"Error sending Telegram notification: {e}")
+        return False
+
 class SystemMonitor:
     def __init__(self, exchange: Any, config: Dict[str, Any]):
         self.exchange = exchange
@@ -36,6 +63,10 @@ class SystemMonitor:
             logging.critical(f"Exchange health check failed: {e}")
             self.send_notification(f"🚨 CRITICAL: Exchange health check failed: {e}")
             return False
+
+    def send_notification(self, message: str) -> bool:
+        """Send notification using Telegram."""
+        return send_telegram_notification(message)
 
     def fetch_position_details(self) -> Dict[str, Any]:
         """Fetch current position details."""
@@ -103,42 +134,6 @@ class SystemMonitor:
             logging.critical(f"Emergency stop failed: {e}")
             self.send_notification(f"🚨 EMERGENCY STOP FAILED: {e}")
             return False
-
-    def send_notification(self, message: str, include_position_details: bool = True) -> None:
-        """Send notification via Telegram."""
-        if not (self.telegram_config.bot_token and self.telegram_config.chat_id):
-            logging.warning('Telegram configuration not set')
-            return
-
-        try:
-            extra_info = ""
-            if include_position_details:
-                balance = self.exchange.fetch_balance()
-                usdt_balance = balance['USDT']['free']
-
-                position_details = self.fetch_position_details()
-                position_info = (
-                    f"Buy Positions: {position_details['buy']} ({position_details['total_buy']:.4f} contracts)\n"
-                    f"Sell Positions: {position_details['sell']} ({position_details['total_sell']:.4f} contracts)\n"
-                    f"Unrealized PnL: {position_details['unrealized_pnl']:.2f} USDT"
-                )
-
-                extra_info = f"\nBalance: {usdt_balance:.2f} USDT\n{position_info}"
-
-            final_message = f"{message}{extra_info}"
-            url = f"https://api.telegram.org/bot{self.telegram_config.bot_token}/sendMessage"
-            payload = {
-                "chat_id": self.telegram_config.chat_id,
-                "text": final_message,
-                "parse_mode": "HTML"
-            }
-
-            response = requests.post(url, json=payload, timeout=10)
-            if not response.ok:
-                logging.error(f"Telegram API error: {response.text}")
-
-        except Exception as e:
-            logging.error(f'Error sending Telegram notification: {e}')
 
     def monitor_system_health(self) -> bool:
         """Periodic system health check."""
