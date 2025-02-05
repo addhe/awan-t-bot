@@ -6,8 +6,8 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime
 
 from config.config import CONFIG
-from src.modules.send_telegram_notification import send_telegram_notification
-from src.modules.initialize_exchange import initialize_exchange
+from src.system_monitor import send_telegram_notification
+from src.exchange_manager import initialize_exchange
 
 # Import refactored modules
 from src.market_analysis import (
@@ -23,18 +23,18 @@ from src.risk_management import (
     manage_position_risk,
     assess_risk_conditions
 )
-from src.order_management import (
+from src.order_manager import (
     place_order_with_sl_tp,
     set_leverage,
     check_funding_rate,
     close_position
 )
-from src.performance_tracking import (
+from src.performance_tracker import (
     PerformanceMetrics,
     analyze_trading_performance,
     check_risk_limits
 )
-from src.system_health import (
+from src.system_health_monitor import (
     check_system_health,
     recover_from_error,
     handle_exchange_error,

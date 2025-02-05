@@ -13,6 +13,9 @@ mkdir -p "$BOT_DIR/logs"
 run_bot() {
     echo "$(date): Starting trading bot" >> "$LOG_FILE"
 
+    # Set PYTHONPATH to include the project root
+    export PYTHONPATH="$BOT_DIR:$PYTHONPATH"
+
     # Start the bot and save its PID
     python3 "$SCRIPT_PATH" >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
