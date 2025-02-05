@@ -5,6 +5,7 @@ import time
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
+import pandas as pd
 
 from config import CONFIG
 from src.system_monitor import SystemMonitor, send_telegram_notification
@@ -58,6 +59,14 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+# API Configuration
+API_KEY = os.environ.get('API_KEY_BINANCE')
+API_SECRET = os.environ.get('API_SECRET_BINANCE')
+
+if API_KEY is None or API_SECRET is None:
+    logging.error('API credentials not found in environment variables')
+    exit(1)
 
 def monitor_positions(exchange: ccxt.Exchange) -> None:
     """Monitor and manage open positions."""
