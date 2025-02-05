@@ -16,34 +16,43 @@ class ExchangeManager:
             api_key = os.environ.get('API_KEY_BINANCE')
             api_secret = os.environ.get('API_SECRET_BINANCE')
 
+            # Debug log for API credentials
+            logging.info(f"API Key first 4 chars: {api_key[:4] if api_key else 'None'}")
+            logging.info(f"API Secret first 4 chars: {api_secret[:4] if api_secret else 'None'}")
+            logging.info(f"Environment variables: {list(os.environ.keys())}")
+
             if not api_key or not api_secret:
                 raise ValueError("API credentials not found in environment variables")
 
             # Initialize exchange with testnet settings
-            self.exchange = ccxt.binance({
+            self.exchange = ccxt.binanceusdm({
                 'apiKey': api_key,
                 'secret': api_secret,
                 'enableRateLimit': True,
                 'options': {
                     'defaultType': 'future',
                     'adjustForTimeDifference': True,
-                    'recvWindow': 60000,
-                    'test': True  # Enable testnet
-                },
-                'urls': {
-                    'api': {
-                        'public': 'https://testnet.binancefuture.com/fapi/v1',
-                        'private': 'https://testnet.binancefuture.com/fapi/v1',
-                    },
-                    'test': {
-                        'public': 'https://testnet.binancefuture.com/fapi/v1',
-                        'private': 'https://testnet.binancefuture.com/fapi/v1',
-                    }
+                    'recvWindow': 10000
                 }
             })
+            
+            # Set the testnet flag
+            self.exchange.set_sandbox_mode(True)
+
+            # Debug log for exchange configuration
+            logging.info("Exchange configuration created")
+            
+            # Test API connection
+            try:
+                balance = self.exchange.fetch_balance()
+                logging.info("Successfully fetched balance")
+            except Exception as e:
+                logging.error(f"Failed to fetch balance: {str(e)}")
+                raise
 
             # Load markets to ensure connection works
             self.exchange.load_markets()
+            logging.info("Markets loaded successfully")
 
             # Set margin type to isolated
             try:
