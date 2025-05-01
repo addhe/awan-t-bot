@@ -1,19 +1,19 @@
 import pandas as pd
 import numpy as np
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
+from src.strategies.boll_stoch_strategy import BollStochStrategy
 
-def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def calculate_indicators(timeframe_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     try:
-        # Calculate various technical indicators
-        df['sma_20'] = df['close'].rolling(window=20).mean()
-        df['sma_50'] = df['close'].rolling(window=50).mean()
-        df['rsi'] = calculate_rsi(df['close'])
-        df['volatility'] = df['close'].rolling(window=20).std()
-        df['atr'] = calculate_atr(df)
-        df['macd'], df['macd_signal'] = calculate_macd(df['close'])
+        strategy = BollStochStrategy()
 
-        return df
+        # Calculate indicators for each timeframe
+        for timeframe, df in timeframe_data.items():
+            df = strategy.calculate_indicators(df)
+            timeframe_data[timeframe] = df
+
+        return timeframe_data
     except Exception as e:
         logging.error(f"Error calculating indicators: {e}")
         raise
@@ -44,30 +44,37 @@ def calculate_macd(prices: pd.Series, fast: int = 12, slow: int = 26, signal: in
     signal_line = macd.ewm(span=signal, adjust=False).mean()
     return macd, signal_line
 
-def check_market_conditions(df: pd.DataFrame) -> Dict[str, Any]:
+def check_market_conditions(timeframe_data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
     try:
-        current_idx = len(df) - 1
+        strategy = BollStochStrategy()
 
-        # Calculate trend direction
-        trend_direction = 'up' if df['sma_20'].iloc[-1] > df['sma_50'].iloc[-1] else 'down'
+        # Get trading signals and confidence
+        signal, confidence, levels = strategy.analyze_signals(timeframe_data)
 
-        # Calculate volatility state
-        volatility = df['volatility'].iloc[-1]
-        volatility_state = 'high' if volatility > df['volatility'].mean() * 1.5 else 'normal'
+        # Get current market state from 1h timeframe
+        df_1h = timeframe_data.get('1h')
+        if df_1h is None or len(df_1h) < 1:
+            raise ValueError("No 1h timeframe data available")
 
-        # Check momentum using RSI
-        rsi = df['rsi'].iloc[-1]
-        momentum = 'overbought' if rsi > 70 else 'oversold' if rsi < 30 else 'neutral'
+        current_price = df_1h['close'].iloc[-1]
+        bb_upper = df_1h['bb_upper'].iloc[-1]
+        bb_lower = df_1h['bb_lower'].iloc[-1]
 
-        # MACD signal
-        macd_signal = 'buy' if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1] else 'sell'
+        # Determine market state
+        if current_price > bb_upper:
+            market_state = 'overbought'
+        elif current_price < bb_lower:
+            market_state = 'oversold'
+        else:
+            market_state = 'neutral'
 
         return {
-            'trend': trend_direction,
-            'volatility': volatility_state,
-            'momentum': momentum,
-            'macd_signal': macd_signal,
-            'rsi': rsi
+            'signal': signal,
+            'confidence': confidence,
+            'market_state': market_state,
+            'stop_loss': levels['stop_loss'],
+            'take_profit': levels['take_profit'],
+            'current_price': current_price
         }
     except Exception as e:
         logging.error(f"Error checking market conditions: {e}")

@@ -4,10 +4,11 @@ import logging
 import time
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import pandas as pd
 
 from config import CONFIG
+from src.strategies.boll_stoch_strategy import BollStochStrategy
 from src.system_monitor import SystemMonitor, send_telegram_notification
 from src.exchange_manager import initialize_exchange
 
@@ -140,109 +141,105 @@ def main(performance: PerformanceMetrics) -> None:
             raise Exception("Invalid configuration")
 
         # Check system health
-        system_health = check_system_health()
-        if not system_health['overall_healthy']:
-            logging.warning("System health issues detected")
-            system_monitor.send_notification("⚠️ System health issues detected")
-
-        # Set leverage
-        if not set_leverage(exchange):
-            raise Exception("Failed to set leverage")
-
-        # Check exchange health
-        if not system_monitor.check_exchange_health():
-            raise Exception("Exchange health check failed")
-
-        # Main trading loop
         while True:
             try:
-                # Fetch market data
-                df = fetch_ohlcv(exchange, CONFIG['symbol'])
-                df = calculate_indicators(df)
+                # Process each trading pair
+                for symbol in trading_pairs:
+                    try:
+                        # Fetch market data for all timeframes
+                        timeframe_data = {}
+                        for tf in timeframes:
+                            df = fetch_ohlcv(exchange, symbol, tf, 100)
+                            if df.empty:
+                                logging.warning(f"No market data available for {symbol} {tf}")
+                                continue
+                            timeframe_data[tf] = df
 
-                # Update market data
-                market_data = update_market_data(df)
+                        if not timeframe_data:
+                            logging.warning(f"No market data available for {symbol}")
+                            continue
 
-                # Check market conditions
-                market_conditions = check_market_conditions(df)
-                trend_strength = check_trend_strength(df)
+                        # Update market data with indicators
+                        timeframe_data = calculate_indicators(timeframe_data)
 
-                # Log market conditions
-                log_market_conditions(df, market_conditions, market_data)
+                        # Get account balance
+                        balance = exchange.fetch_balance()
+                        free_balance = float(balance['USDT']['free'])
 
-                # Check if we can trade
-                if not performance.can_trade():
-                    logging.info("Trading limits reached, skipping trade")
-                    time.sleep(60)
-                    continue
+                        # Check market conditions
+                        conditions = check_market_conditions(timeframe_data)
 
-                # Check if we're in excluded hours
-                current_hour = datetime.utcnow().hour
-                if current_hour in CONFIG['excluded_hours']:
-                    logging.info(f"Current hour {current_hour} is excluded from trading")
-                    time.sleep(300)  # Sleep for 5 minutes
-                    continue
+                        # Risk assessment
+                        if not assess_risk_conditions(performance, conditions):
+                            logging.info(f"{symbol}: Risk conditions not met")
+                            continue
 
-                # Check funding rate
-                funding_info = check_funding_rate(exchange)
-                if funding_info['should_wait']:
-                    logging.info("Unfavorable funding rate, waiting...")
-                    time.sleep(60)
-                    continue
+                        # Check funding rate for futures
+                        if not check_funding_rate(exchange, symbol):
+                            logging.info(f"{symbol}: Unfavorable funding rate, skipping trade")
+                            continue
 
-                # Analyze market depth
-                depth_analysis = analyze_market_depth(exchange, CONFIG['symbol'], 'buy')
+                        # Set leverage
+                        set_leverage(exchange, symbol, CONFIG['leverage'])
 
-                # Determine trading decision based on conditions
-                if market_conditions['trend'] == 'up' and trend_strength['trend_strength'] > 25:
-                    # Calculate position size
-                    balance = exchange.fetch_balance()['total']['USDT']
-                    position_size = calculate_position_size(
-                        balance,
-                        market_data['current_price'],
-                        calculate_dynamic_stop_loss(df, 'buy', market_data['current_price']),
-                        exchange,
-                        df['volatility'].iloc[-1]
-                    )
+                        # Trading logic
+                        if conditions['signal'] in ['buy', 'sell'] and conditions['confidence'] >= 0.7:
+                            side = conditions['signal']
 
-                    # Validate position size
-                    min_order_size = calculate_min_order_size(exchange, CONFIG['symbol'], market_data['current_price'])
-                    is_valid, validation_message = validate_position_size(position_size, market_data['current_price'], balance, min_order_size)
+                            # Calculate position size
+                            position_size = calculate_position_size(
+                                balance,
+                                conditions['current_price'],
+                                conditions['stop_loss'],
+                                exchange,
+                                timeframe_data['1h']['close'].std()
+                            )
 
-                    if not is_valid:
-                        logging.warning(f"Invalid position size: {validation_message}")
+                            # Validate position size
+                            min_order_size = calculate_min_order_size(exchange, symbol, conditions['current_price'])
+                            is_valid, validation_message = validate_position_size(
+                                position_size,
+                                conditions['current_price'],
+                                balance,
+                                min_order_size
+                            )
+
+                            if not is_valid:
+                                logging.warning(f"{symbol}: Invalid position size: {validation_message}")
+                                continue
+
+                            # Check existing position
+                            existing_position = check_existing_position(exchange, side)
+                            if existing_position['exists']:
+                                logging.info(f"{symbol}: Position already exists, skipping trade")
+                                continue
+
+                            # Place orders
+                            orders = place_order_with_sl_tp(
+                                exchange,
+                                side,
+                                position_size,
+                                conditions['current_price'],
+                                conditions['stop_loss'],
+                                conditions['take_profit']
+                            )
+
+                            if orders['success']:
+                                send_telegram_notification(
+                                    f"{'🟢' if side == 'buy' else '🔴'} New {side.upper()} position opened\n"
+                                    f"Symbol: {symbol}\n"
+                                    f"Price: {conditions['current_price']}\n"
+                                    f"Size: {position_size}\n"
+                                    f"SL: {conditions['stop_loss']}\n"
+                                    f"TP: {conditions['take_profit']}"
+                                )
+
+                                # Update performance metrics
+                                performance.update_trade(0, False)  # Initial trade entry
+
+                    except Exception as e:
+                        logging.error(f"Error processing {symbol}: {e}")
                         continue
-
-                    # Check existing position
-                    existing_position = check_existing_position(exchange, 'buy')
-                    if existing_position['exists']:
-                        logging.info("Position already exists, skipping trade")
-                        continue
-
-                    # Place orders
-                    stop_loss_price = calculate_dynamic_stop_loss(df, 'buy', market_data['current_price'])
-                    take_profit_price = market_data['current_price'] * (1 + CONFIG['tp1_target'])
-
-                    orders = place_order_with_sl_tp(
-                        exchange,
-                        'buy',
-                        position_size,
-                        market_data['current_price'],
-                        stop_loss_price,
-                        take_profit_price
-                    )
-
-                    if orders['success']:
-                        send_telegram_notification(
-                            f"🟢 New LONG position opened\n"
-                            f"Price: {market_data['current_price']}\n"
-                            f"Size: {position_size}\n"
-                            f"SL: {stop_loss_price}\n"
-                            f"TP: {take_profit_price}"
-                        )
-
-                    # Update performance metrics
-                    performance.update_trade(0, False)  # Initial trade entry
 
                 # Monitor existing positions
                 monitor_positions(exchange)

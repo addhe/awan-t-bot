@@ -3,6 +3,8 @@ from typing import Dict, Any, Optional
 import ccxt
 import pandas as pd
 from datetime import datetime
+import telegram
+from telegram.error import TelegramError
 
 def fetch_ohlcv(exchange: ccxt.Exchange, symbol: str,
                 limit: int = 50, timeframe: str = '1m') -> pd.DataFrame:
@@ -36,31 +38,35 @@ def calculate_min_order_size(exchange: ccxt.Exchange, symbol: str,
         logging.error(f"Error calculating minimum order size: {e}")
         raise
 
-def check_existing_position(exchange: ccxt.Exchange, side: str) -> Dict[str, Any]:
+# Telegram bot instance
+_bot: Optional[telegram.Bot] = None
+
+def setup_telegram(bot_token: str, chat_id: str) -> None:
+    """Initialize Telegram bot"""
+    global _bot
     try:
-        positions = exchange.fetch_positions()
-
-        for position in positions:
-            if position['symbol'] == exchange.symbol:
-                position_side = 'buy' if float(position['contracts']) > 0 else 'sell'
-
-                if position_side == side:
-                    return {
-                        'exists': True,
-                        'size': abs(float(position['contracts'])),
-                        'entry_price': float(position['entryPrice']),
-                        'unrealized_pnl': float(position['unrealizedPnl'])
-                    }
-
-        return {
-            'exists': False,
-            'size': 0,
-            'entry_price': 0,
-            'unrealized_pnl': 0
-        }
-    except Exception as e:
-        logging.error(f"Error checking existing position: {e}")
+        _bot = telegram.Bot(token=bot_token)
+        # Test the connection
+        _bot.send_message(chat_id=chat_id, text="🤖 Telegram bot initialized")
+    except TelegramError as e:
+        logging.error(f"Failed to initialize Telegram bot: {e}")
         raise
+
+def send_telegram_message(message: str) -> None:
+    """Send message via Telegram"""
+    from config.settings import TELEGRAM_CONFIG
+
+    if not TELEGRAM_CONFIG['enabled'] or not _bot:
+        return
+
+    try:
+        _bot.send_message(
+            chat_id=TELEGRAM_CONFIG['chat_id'],
+            text=message,
+            parse_mode='HTML'
+        )
+    except TelegramError as e:
+        logging.error(f"Failed to send Telegram message: {e}")
 
 def update_market_data(df: pd.DataFrame) -> Dict[str, Any]:
     try:
@@ -88,40 +94,24 @@ def validate_config() -> bool:
     """
     Validate the configuration settings
     """
-    from config.config import CONFIG
-
-    required_fields = [
-        'max_daily_trades',
-        'max_daily_loss_percent',
-        'max_drawdown_percent',
-        'leverage',
-        'symbol',
-        'timeframe'
-    ]
+    from config.settings import TRADING_CONFIG, EXCHANGE_CONFIG, TELEGRAM_CONFIG
 
     try:
-        # Check for required fields
-        for field in required_fields:
-            if field not in CONFIG:
-                logging.error(f"Missing required config field: {field}")
+        # Validate trading config
+        if TRADING_CONFIG['max_open_trades'] < 1:
+            logging.error("max_open_trades must be at least 1")
+            return False
+
+        # Validate exchange config
+        if not EXCHANGE_CONFIG['api_key'] or not EXCHANGE_CONFIG['api_secret']:
+            logging.error("Missing API credentials")
+            return False
+
+        # Validate Telegram config if enabled
+        if TELEGRAM_CONFIG['enabled']:
+            if not TELEGRAM_CONFIG['bot_token'] or not TELEGRAM_CONFIG['chat_id']:
+                logging.error("Telegram enabled but missing bot_token or chat_id")
                 return False
-
-        # Validate specific fields
-        if CONFIG['max_daily_trades'] < 1:
-            logging.error("max_daily_trades must be at least 1")
-            return False
-
-        if not (0 < CONFIG['max_daily_loss_percent'] <= 100):
-            logging.error("max_daily_loss_percent must be between 0 and 100")
-            return False
-
-        if not (0 < CONFIG['max_drawdown_percent'] <= 100):
-            logging.error("max_drawdown_percent must be between 0 and 100")
-            return False
-
-        if not (1 <= CONFIG['leverage'] <= 125):
-            logging.error("leverage must be between 1 and 125")
-            return False
 
         return True
 

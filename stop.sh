@@ -64,7 +64,7 @@ fi
 echo "$(date): Bot stopped by user" >> "$LOG_FILE"
 
 # Double check no processes are left
-REMAINING_PYTHON=$(pgrep -f "python3.*main.py")
+REMAINING_PYTHON=$(pgrep -f "python3.*bot.py")
 if [ ! -z "$REMAINING_PYTHON" ]; then
     echo "Found remaining Python processes, forcing stop..."
     kill -9 $REMAINING_PYTHON

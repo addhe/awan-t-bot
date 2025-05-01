@@ -2,7 +2,7 @@
 
 # Configuration
 BOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_PATH="$BOT_DIR/main.py"
+SCRIPT_PATH="$BOT_DIR/bot.py"
 LOG_FILE="$BOT_DIR/logs/trading_bot.log"
 PID_FILE="$BOT_DIR/bot.pid"
 
