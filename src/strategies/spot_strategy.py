@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Tuple
 from ta.volatility import BollingerBands
-from ta.momentum import StochasticRSI
+from ta.momentum import StochRSIIndicator
 from ta.trend import EMAIndicator
 import logging
 
@@ -50,7 +50,7 @@ class SpotStrategy:
             df["ema"] = ema.ema_indicator()
 
             # Stochastic RSI
-            stoch = StochasticRSI(
+            stoch = StochRSIIndicator(
                 close=df["close"],
                 window=self.stoch_window,
                 smooth1=self.stoch_smooth_k,
