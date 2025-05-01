@@ -2,8 +2,12 @@
 """
 Script to check bot status
 """
-import os
 import sys
+import os
+
+# Add project root to Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from src.utils.status_monitor import BotStatusMonitor
 
 def main():
