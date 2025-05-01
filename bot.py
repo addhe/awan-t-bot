@@ -20,7 +20,7 @@ from config.settings import (
     EXCHANGE_CONFIG
 )
 from src.strategies.spot_strategy import SpotStrategy
-from src.utils import setup_telegram, send_telegram_message
+from src.utils import setup_telegram, send_telegram_message, BotStatusMonitor
 
 # Setup logging
 os.makedirs('logs', exist_ok=True)

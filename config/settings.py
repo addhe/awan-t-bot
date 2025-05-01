@@ -81,11 +81,17 @@ LOG_CONFIG = {
     'backup_count': 3
 }
 
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 # Telegram configuration
 TELEGRAM_CONFIG = {
     'enabled': True,
-    'bot_token': '',  # Your Telegram bot token
-    'chat_id': '',    # Your Telegram chat ID
+    'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
+    'chat_id': os.getenv('TELEGRAM_CHAT_ID', ''),
     'notification_types': [
         'trade_entry',
         'trade_exit',
@@ -98,7 +104,7 @@ TELEGRAM_CONFIG = {
 # Exchange configuration
 EXCHANGE_CONFIG = {
     'name': 'binance',
-    'api_key': '',    # Your Binance API key
-    'api_secret': '', # Your Binance API secret
-    'testnet': False  # Set to True for testing
+    'api_key': os.getenv('BINANCE_API_KEY', ''),
+    'api_secret': os.getenv('BINANCE_API_SECRET', ''),
+    'testnet': os.getenv('USE_TESTNET', 'False').lower() == 'true'
 }
