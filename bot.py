@@ -536,7 +536,11 @@ class SpotTradingBot:
                         send_telegram_message(f"🔴 Error in main loop: {str(e)}")
                     time.sleep(SYSTEM_CONFIG['retry_wait'])
 
-                time.sleep(SYSTEM_CONFIG['retry_wait'])
+        except Exception as e:
+            logger.error(f"Fatal error: {e}")
+            if TELEGRAM_CONFIG['enabled']:
+                send_telegram_message(f"🔴 Fatal error: {str(e)}")
+            raise
 
 if __name__ == '__main__':
     bot = SpotTradingBot()
