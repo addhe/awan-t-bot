@@ -29,8 +29,10 @@ handler = RotatingFileHandler(
     maxBytes=LOG_CONFIG['max_file_size'],
     backupCount=LOG_CONFIG['backup_count']
 )
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
 logging.basicConfig(
-    handlers=[handler],
+    handlers=[handler, console_handler],
     level=LOG_CONFIG['log_level'],
     format=LOG_CONFIG['log_format']
 )
