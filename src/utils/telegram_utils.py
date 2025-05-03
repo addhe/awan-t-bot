@@ -8,13 +8,13 @@ from telegram.error import TelegramError
 logger = logging.getLogger(__name__)
 _bot = None
 
-def setup_telegram(token: str, chat_id: str) -> None:
+async def setup_telegram(token: str, chat_id: str) -> None:
     """Initialize Telegram bot"""
     global _bot
     try:
         _bot = Bot(token=token)
         # Test the connection
-        _bot.get_me()
+        await _bot.get_me()
         logger.info("Telegram bot initialized successfully")
     except TelegramError as e:
         logger.error(f"Failed to initialize Telegram bot: {e}")

@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class SpotTradingBot:
-    def __init__(self):
+    async def __init__(self):
         """Initialize the bot"""
         self.exchange = self._initialize_exchange()
         self.strategy = SpotStrategy(**STRATEGY_CONFIG)
@@ -51,7 +51,7 @@ class SpotTradingBot:
 
         # Initialize Telegram if enabled
         if TELEGRAM_CONFIG['enabled']:
-            setup_telegram(
+            await setup_telegram(
                 TELEGRAM_CONFIG['bot_token'],
                 TELEGRAM_CONFIG['chat_id']
             )
@@ -414,7 +414,7 @@ class SpotTradingBot:
         except Exception as e:
             logger.error(f"Error during graceful shutdown: {e}")
 
-    def update_status(self):
+    async def update_status(self):
         """Update bot status and active trades"""
         try:
             # Get current balance
@@ -456,7 +456,7 @@ class SpotTradingBot:
                 # Only send status update every hour
                 now = time.time()
                 if now - self.last_status_update >= 3600:  # 1 hour
-                    send_telegram_message(self.monitor.format_status_message())
+                    await send_telegram_message(self.monitor.format_status_message())
                     self.last_status_update = now
 
         except Exception as e:
@@ -494,13 +494,13 @@ class SpotTradingBot:
                 'total_profit': 0.0
             }
 
-    def run(self):
+    async def run(self):
         """Main bot loop"""
         logger.info("Starting bot...")
 
         try:
             if TELEGRAM_CONFIG['enabled']:
-                send_telegram_message("🤖 Trading bot started")
+                await send_telegram_message("🤖 Trading bot started")
 
             # Register signal handlers
             import signal
@@ -547,5 +547,8 @@ class SpotTradingBot:
             raise
 
 if __name__ == '__main__':
-    bot = SpotTradingBot()
-    bot.run()
+    import asyncio
+    async def main():
+        bot = await SpotTradingBot()
+        await bot.run()
+    asyncio.run(main())
