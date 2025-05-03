@@ -5,7 +5,7 @@ import os
 import time
 import logging
 from logging.handlers import RotatingFileHandler
-from datetime import datetime
+from datetime import datetime, timedelta
 import ccxt
 import pandas as pd
 from typing import Dict, Any, Optional
