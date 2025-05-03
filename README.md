@@ -238,11 +238,55 @@ The developers assume no responsibility for any financial losses.
 2. Stop Loss: Dynamic (1.2% - 2.0%)
 3. Trailing stop when in profit
 
-### Risk Management
-- Maximum 3 concurrent positions
-- Position size based on account balance
-- Automatic profit taking
-- Dynamic stop loss adjustment
+### Risk Management & Position Sizing
+
+#### Balance Requirements
+- Minimum recommended: $100 USDT
+- Optimal recommended: $500 USDT
+
+#### Position Size Calculation
+Example with $500 USDT balance:
+- Risk per trade: 0.5% = $2.5 USDT
+- Stop loss: 1%
+- Leverage: 2x
+```
+Position size = (Risk × Leverage) ÷ Stop Loss
+For BTC at $40,000:
+$2.5 × 2 ÷ $400 = 0.0125 BTC ≈ $500 position value
+```
+
+#### Risk Controls
+1. **Daily Loss Limit**: 3%
+   - With $500 balance = $15 max daily loss
+   - Bot stops trading if reached
+
+2. **Drawdown Protection**: 5%
+   - Maximum drawdown = $25 on $500
+   - Size reduction or trading pause
+
+3. **Volatility Adjustments**
+   - High volatility (>5%): Size -30%
+   - Low volatility (<2%): Size +20%
+
+#### Take Profit Strategy
+1. **Partial TP 1** (70% of position)
+   - Target: 1% profit
+   - Example: $350 from $500 position
+
+2. **Partial TP 2** (30% of position)
+   - Target: 2% profit
+   - Example: Remaining $150
+
+#### Trailing Stop
+- Activates at 1% profit
+- Follows price at 0.5% distance
+- Helps secure profits in trends
+
+#### Trading Limits
+- Max 3 simultaneous positions
+- Max 5 trades per day
+- Min market volume: $5,000
+- Excluded hours: 00:00, 01:00, 23:00 UTC
 
 ## Troubleshooting
 
