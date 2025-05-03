@@ -435,11 +435,25 @@ class SpotTradingBot:
                 except Exception as e:
                     logger.error(f"Error cancelling orders for {symbol}: {e}")
 
-            # Log active trades
+            # Save active trades to completed trades
             if self.active_trades:
                 msg = "⚠️ Active trades at shutdown:\n"
                 for symbol, trade in self.active_trades.items():
-                    msg += f"- {symbol}: Entry at {trade['entry_price']}\n"
+                    current_price = self._get_current_price(symbol)
+                    pnl = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
+
+                    # Save to completed trades
+                    self.monitor.save_completed_trade({
+                        'symbol': symbol,
+                        'entry_price': trade['entry_price'],
+                        'exit_price': current_price,
+                        'quantity': trade['quantity'],
+                        'profit': pnl,
+                        'close_reason': 'bot_shutdown'
+                    })
+
+                    msg += f"- {symbol}: Entry at {trade['entry_price']}, Current price: {current_price}, PnL: {pnl:.2f}%\n"
+
                 logger.warning(msg)
                 if TELEGRAM_CONFIG['enabled']:
                     send_telegram_message(msg)

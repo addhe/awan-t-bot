@@ -15,6 +15,7 @@ class BotStatusMonitor:
         self.status_dir = status_dir
         self.status_file = os.path.join(status_dir, "bot_status.json")
         self.trades_file = os.path.join(status_dir, "active_trades.json")
+        self.completed_trades_file = os.path.join(status_dir, "completed_trades.json")
         self._ensure_status_dir()
 
     def _ensure_status_dir(self):
@@ -68,9 +69,8 @@ class BotStatusMonitor:
     def get_completed_trades(self, since=None) -> List[Dict[str, Any]]:
         """Get completed trades since given datetime"""
         try:
-            completed_trades_file = os.path.join(self.status_dir, "completed_trades.json")
-            if os.path.exists(completed_trades_file):
-                with open(completed_trades_file, 'r') as f:
+            if os.path.exists(self.completed_trades_file):
+                with open(self.completed_trades_file, 'r') as f:
                     data = json.load(f)
                     trades = data.get('completed_trades', [])
                     if since:
@@ -80,6 +80,37 @@ class BotStatusMonitor:
         except Exception as e:
             logger.error(f"Error reading completed trades: {e}")
             return []
+
+    def save_completed_trade(self, trade: Dict[str, Any]):
+        """Save a completed trade to history
+
+        Args:
+            trade (Dict[str, Any]): Trade information including symbol, entry_price,
+                                    exit_price, quantity, and profit
+        """
+        try:
+            # Load existing trades
+            completed_trades = []
+            if os.path.exists(self.completed_trades_file):
+                with open(self.completed_trades_file, 'r') as f:
+                    data = json.load(f)
+                    completed_trades = data.get('completed_trades', [])
+
+            # Add close time
+            trade['close_time'] = datetime.now().isoformat()
+
+            # Append new trade
+            completed_trades.append(trade)
+
+            # Save updated trades
+            with open(self.completed_trades_file, 'w') as f:
+                json.dump({
+                    'last_updated': datetime.now().isoformat(),
+                    'completed_trades': completed_trades
+                }, f, indent=2)
+
+        except Exception as e:
+            logger.error(f"Error saving completed trade: {e}")
 
     def format_status_message(self) -> str:
         """Format status for Telegram"""
