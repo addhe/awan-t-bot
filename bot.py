@@ -3,6 +3,7 @@ Main bot implementation for spot trading
 """
 import os
 import time
+import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
@@ -522,7 +523,7 @@ class SpotTradingBot:
                 try:
                     # Check system health
                     if not self.check_health():
-                        time.sleep(SYSTEM_CONFIG['retry_wait'])
+                        await asyncio.sleep(SYSTEM_CONFIG['retry_wait'])
                         continue
 
                     # Check active trades
@@ -535,21 +536,21 @@ class SpotTradingBot:
                         self.process_pair(pair_config)
 
                     # Update status
-                    self.update_status()
+                    await self.update_status()
 
                     # Sleep for the check interval
-                    time.sleep(SYSTEM_CONFIG['check_interval'])
+                    await asyncio.sleep(SYSTEM_CONFIG['check_interval'])
 
                 except Exception as e:
                     logger.error(f"Error in main loop: {e}")
                     if TELEGRAM_CONFIG['enabled']:
-                        send_telegram_message(f"🔴 Error in main loop: {str(e)}")
-                    time.sleep(SYSTEM_CONFIG['retry_wait'])
+                        await send_telegram_message(f"🔴 Error in main loop: {str(e)}")
+                    await asyncio.sleep(SYSTEM_CONFIG['retry_wait'])
 
         except Exception as e:
             logger.error(f"Fatal error: {e}")
             if TELEGRAM_CONFIG['enabled']:
-                send_telegram_message(f"🔴 Fatal error: {str(e)}")
+                await send_telegram_message(f"🔴 Fatal error: {str(e)}")
             raise
 
 if __name__ == '__main__':
