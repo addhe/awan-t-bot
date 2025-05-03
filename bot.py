@@ -25,19 +25,29 @@ from src.utils import setup_telegram, send_telegram_message, BotStatusMonitor, r
 
 # Setup logging
 os.makedirs('logs', exist_ok=True)
-handler = RotatingFileHandler(
+
+# Get logger
+logger = logging.getLogger(__name__)
+logger.setLevel(LOG_CONFIG['log_level'])
+
+# Remove any existing handlers
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
+
+# Add handlers
+file_handler = RotatingFileHandler(
     LOG_CONFIG['log_file'],
     maxBytes=LOG_CONFIG['max_file_size'],
     backupCount=LOG_CONFIG['backup_count']
 )
+file_handler.setFormatter(logging.Formatter(LOG_CONFIG['log_format']))
+
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
-logging.basicConfig(
-    handlers=[handler, console_handler],
-    level=LOG_CONFIG['log_level'],
-    format=LOG_CONFIG['log_format']
-)
-logger = logging.getLogger(__name__)
+console_handler.setFormatter(logging.Formatter(LOG_CONFIG['log_format']))
+
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 class SpotTradingBot:
     def __init__(self):
@@ -509,6 +519,28 @@ class SpotTradingBot:
                 'win_rate': 0.0,
                 'total_profit': 0.0
             }
+
+    def _calculate_pnl(self, trade: Dict[str, Any]) -> float:
+        """Calculate profit/loss for a trade
+
+        Args:
+            trade (Dict[str, Any]): Trade information containing entry_price and quantity
+
+        Returns:
+            float: Profit/loss percentage
+        """
+        try:
+            symbol = next(s for s, t in self.active_trades.items() if t == trade)
+            current_price = self._get_current_price(symbol)
+            entry_price = float(trade['entry_price'])
+
+            if current_price and entry_price:
+                return ((current_price - entry_price) / entry_price) * 100
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error calculating PnL: {e}")
+            return 0.0
 
     async def run(self):
         """Main bot loop"""
