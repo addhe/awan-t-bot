@@ -42,6 +42,9 @@ TRADING_CONFIG = {
     'max_trade_retry': 3,
     'order_timeout': 60,  # seconds
     'cancel_after': 300,  # cancel order if not filled after 5 minutes
+    'allocation_per_trade': 0.2,  # 20% dari balance untuk setiap trade
+    'min_allocation_usdt': 10,  # Minimum 10 USDT per trade
+    'max_allocation_usdt': 100,  # Maximum 100 USDT per trade
 }
 
 # Timeframes to analyze

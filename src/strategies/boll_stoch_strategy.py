@@ -213,3 +213,54 @@ class BollStochStrategy:
         except Exception as e:
             logger.error(f"Error in should_sell: {e}")
             return False, 0.0
+            
+    def calculate_position_size(
+        self,
+        balance: float,
+        current_price: float,
+        pair_config: Dict[str, Any],
+        trading_config: Dict[str, Any]
+    ) -> Tuple[float, Dict[str, Any]]:
+        """Calculate position size based on balance and allocation settings
+        
+        Args:
+            balance (float): Available balance in USDT
+            current_price (float): Current price of the asset
+            pair_config (Dict[str, Any]): Trading pair configuration
+            trading_config (Dict[str, Any]): Trading configuration
+            
+        Returns:
+            Tuple[float, Dict[str, Any]]: (quantity, allocation_info)
+        """
+        try:
+            # Get allocation settings
+            allocation_pct = trading_config.get('allocation_per_trade', 0.2)  # Default 20%
+            min_allocation = trading_config.get('min_allocation_usdt', 10)  # Default 10 USDT
+            max_allocation = trading_config.get('max_allocation_usdt', 100)  # Default 100 USDT
+            
+            # Calculate allocation amount
+            allocation = balance * allocation_pct
+            
+            # Apply min/max limits
+            allocation = max(min(allocation, max_allocation), min_allocation)
+            
+            # Calculate quantity
+            quantity = allocation / current_price
+            
+            # Round to required precision
+            quantity = round(quantity, pair_config['quantity_precision'])
+            
+            # Return quantity and allocation info
+            return quantity, {
+                'allocation_pct': allocation_pct * 100,
+                'allocation_usdt': allocation,
+                'max_allocation': max_allocation
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating position size: {e}")
+            return 0.0, {
+                'allocation_pct': 0,
+                'allocation_usdt': 0,
+                'max_allocation': 0
+            }
