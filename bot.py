@@ -121,9 +121,11 @@ class SpotTradingBot:
                 logger.warning("No balance data returned")
                 return {}
 
-            return {asset: float(bal.get('free', 0))
-                    for asset, bal in balance.items()
-                    if float(bal.get('free', 0)) > 0}
+            # Get total balance data
+            total = balance.get('total', {})
+            return {asset: float(amount)
+                    for asset, amount in total.items()
+                    if float(amount) > 0}
 
         except ccxt.NetworkError as e:
             logger.error(f"Network error fetching balances: {e}")

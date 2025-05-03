@@ -65,6 +65,22 @@ class BotStatusMonitor:
             logger.error(f"Error reading trades: {e}")
             return []
 
+    def get_completed_trades(self, since=None) -> List[Dict[str, Any]]:
+        """Get completed trades since given datetime"""
+        try:
+            completed_trades_file = os.path.join(self.status_dir, "completed_trades.json")
+            if os.path.exists(completed_trades_file):
+                with open(completed_trades_file, 'r') as f:
+                    data = json.load(f)
+                    trades = data.get('completed_trades', [])
+                    if since:
+                        trades = [t for t in trades if datetime.fromisoformat(t['close_time']) >= since]
+                    return trades
+            return []
+        except Exception as e:
+            logger.error(f"Error reading completed trades: {e}")
+            return []
+
     def format_status_message(self) -> str:
         """Format status for Telegram"""
         status = self.get_bot_status()

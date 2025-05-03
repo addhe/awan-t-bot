@@ -20,7 +20,7 @@ def setup_telegram(token: str, chat_id: str) -> None:
         logger.error(f"Failed to initialize Telegram bot: {e}")
         _bot = None
 
-def send_telegram_message(message: str) -> None:
+async def send_telegram_message(message: str) -> None:
     """Send message via Telegram"""
     from config.settings import TELEGRAM_CONFIG
 
@@ -28,7 +28,7 @@ def send_telegram_message(message: str) -> None:
         return
 
     try:
-        _bot.send_message(
+        await _bot.send_message(
             chat_id=TELEGRAM_CONFIG['chat_id'],
             text=message,
             parse_mode='HTML'
