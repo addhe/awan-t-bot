@@ -26,28 +26,35 @@ from src.utils import setup_telegram, send_telegram_message, BotStatusMonitor, r
 # Setup logging
 os.makedirs('logs', exist_ok=True)
 
-# Get logger
-logger = logging.getLogger(__name__)
-logger.setLevel(LOG_CONFIG['log_level'])
+# Configure root logger first
+root_logger = logging.getLogger()
+root_logger.setLevel(LOG_CONFIG['log_level'])
 
-# Remove any existing handlers
-for handler in logger.handlers[:]:
-    logger.removeHandler(handler)
+# Remove any existing handlers from root logger
+for handler in root_logger.handlers[:]:
+    root_logger.removeHandler(handler)
 
-# Add handlers
+# Create formatters
+log_formatter = logging.Formatter(LOG_CONFIG['log_format'])
+
+# Create handlers
 file_handler = RotatingFileHandler(
     LOG_CONFIG['log_file'],
     maxBytes=LOG_CONFIG['max_file_size'],
     backupCount=LOG_CONFIG['backup_count']
 )
-file_handler.setFormatter(logging.Formatter(LOG_CONFIG['log_format']))
+file_handler.setFormatter(log_formatter)
 
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(logging.Formatter(LOG_CONFIG['log_format']))
+console_handler.setFormatter(log_formatter)
 
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
+# Add handlers to root logger
+root_logger.addHandler(file_handler)
+root_logger.addHandler(console_handler)
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 class SpotTradingBot:
     def __init__(self):

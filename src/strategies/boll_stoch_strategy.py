@@ -1,9 +1,12 @@
 import pandas as pd
 import numpy as np
+import logging
 from typing import Dict, List, Tuple
 from ta.volatility import BollingerBands
 from ta.momentum import StochasticRSI
 from ta.trend import EMAIndicator
+
+logger = logging.getLogger(__name__)
 
 class BollStochStrategy:
     def __init__(
@@ -173,3 +176,40 @@ class BollStochStrategy:
             "stop_loss": stop_loss,
             "take_profit": take_profit
         }
+
+    def should_sell(self, df: pd.DataFrame) -> Tuple[bool, float]:
+        """Check if we should sell based on current conditions
+
+        Args:
+            df (pd.DataFrame): DataFrame with price data and indicators
+
+        Returns:
+            Tuple[bool, float]: (should_sell, confidence)
+        """
+        try:
+            if len(df) < 2:  # Need at least 2 candles
+                return False, 0.0
+
+            # Get latest values
+            current_price = df["close"].iloc[-1]
+            bb_upper = df["bb_upper"].iloc[-1]
+            bb_middle = df["bb_middle"].iloc[-1]
+            ema = df["ema"].iloc[-1]
+            stoch_k = df["stoch_k"].iloc[-1]
+            stoch_d = df["stoch_d"].iloc[-1]
+
+            # Sell conditions
+            if (current_price > bb_upper and    # Price above upper BB
+                current_price < ema and         # Price below EMA
+                stoch_k > 80 and               # Overbought
+                stoch_k < stoch_d):            # Stoch crossunder
+
+                # Calculate confidence based on how overbought we are
+                confidence = min((stoch_k - 80) / 20, 1.0)  # Scale 80-100 to 0-1
+                return True, confidence
+
+            return False, 0.0
+
+        except Exception as e:
+            logger.error(f"Error in should_sell: {e}")
+            return False, 0.0
