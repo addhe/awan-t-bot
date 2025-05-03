@@ -360,7 +360,7 @@ class SpotTradingBot:
         except Exception as e:
             logger.error(f"Error processing {pair_config['symbol']}: {e}")
 
-    def check_active_trades(self):
+    async def check_active_trades(self):
         """Check and manage active trades"""
         try:
             for symbol, trade in list(self.active_trades.items()):
@@ -386,7 +386,7 @@ class SpotTradingBot:
 
                         if TELEGRAM_CONFIG['enabled']:
                             emoji = "🟢" if profit > 0 else "🔴"
-                            send_telegram_message(
+                            await send_telegram_message(
                                 f"{emoji} Closed {symbol} position\n"
                                 f"Entry: {trade['entry_price']}\n"
                                 f"Exit: {current_price}\n"
@@ -527,7 +527,7 @@ class SpotTradingBot:
                         continue
 
                     # Check active trades
-                    self.check_active_trades()
+                    await self.check_active_trades()
 
                     # Process each trading pair
                     for pair_config in TRADING_PAIRS:
