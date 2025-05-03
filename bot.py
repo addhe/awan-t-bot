@@ -150,6 +150,18 @@ class SpotTradingBot:
             logger.error(f"Unexpected error fetching balances: {e}")
             return {}
 
+    def _get_current_price(self, symbol: str) -> float:
+        """Get current price for a symbol"""
+        try:
+            # Fetch latest OHLCV data
+            df = self.fetch_ohlcv(symbol, timeframe='1m', limit=1)
+            if df.empty:
+                raise Exception(f"No price data available for {symbol}")
+            return float(df['close'].iloc[-1])
+        except Exception as e:
+            logger.error(f"Error getting current price for {symbol}: {e}")
+            return None
+
     def convert_to_usdt(self, asset: str, amount: float) -> bool:
         """Convert an asset to USDT using market order"""
         try:
@@ -259,35 +271,32 @@ class SpotTradingBot:
             logger.error(f"Error placing market sell for {symbol}: {e}")
             return {}
 
-    def check_health(self) -> bool:
+    async def check_health(self) -> bool:
         """Check system and exchange health"""
         try:
-            # Check if enough time has passed since last health check
-            now = datetime.now()
-            if (now - self.last_health_check).total_seconds() < SYSTEM_CONFIG['health_check_interval']:
-                return True
+            # Check if exchange is initialized
+            if not self.exchange:
+                logger.error("Exchange not initialized")
+                return False
 
-            # Update last health check time
-            self.last_health_check = now
-
-            # Check exchange connection
-            self.exchange.fetch_time()
-
-            # Check and ensure USDT balance
-            balance = self.ensure_usdt_balance()
-            if balance <= 0:
-                logger.warning("Insufficient USDT balance and no convertible assets")
+            # Check API connection
+            try:
+                self.exchange.fetch_balance()
+            except Exception as e:
+                logger.error(f"API connection error: {e}")
+                if TELEGRAM_CONFIG['enabled']:
+                    await send_telegram_message(f"🔴 Error: Health check failed - {str(e)}")
                 return False
 
             return True
 
         except Exception as e:
-            logger.error(f"Health check failed: {e}")
+            logger.error(f"Error in health check: {e}")
             if TELEGRAM_CONFIG['enabled']:
-                send_telegram_message(f"🔴 Error: Health check failed - {str(e)}")
+                await send_telegram_message(f"🔴 Error: Health check failed - {str(e)}")
             return False
 
-    def process_pair(self, pair_config: Dict[str, Any]):
+    async def process_pair(self, pair_config: Dict[str, Any]):
         """Process a single trading pair"""
         try:
             symbol = pair_config['symbol']
@@ -346,7 +355,7 @@ class SpotTradingBot:
                     }
 
                     if TELEGRAM_CONFIG['enabled']:
-                        send_telegram_message(
+                        await send_telegram_message(
                             f"🟢 New {symbol} position opened\n"
                             f"Price: {levels['entry']}\n"
                             f"Quantity: {quantity}\n"
@@ -522,7 +531,7 @@ class SpotTradingBot:
             while True:
                 try:
                     # Check system health
-                    if not self.check_health():
+                    if not await self.check_health():
                         await asyncio.sleep(SYSTEM_CONFIG['retry_wait'])
                         continue
 
@@ -533,7 +542,7 @@ class SpotTradingBot:
                     for pair_config in TRADING_PAIRS:
                         if len(self.active_trades) >= TRADING_CONFIG['max_open_trades']:
                             break
-                        self.process_pair(pair_config)
+                        await self.process_pair(pair_config)
 
                     # Update status
                     await self.update_status()

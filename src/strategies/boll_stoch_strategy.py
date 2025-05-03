@@ -26,29 +26,44 @@ class BollStochStrategy:
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate all technical indicators for the strategy."""
-        # Bollinger Bands
-        bb = BollingerBands(
-            close=df["close"],
-            window=self.boll_window,
-            window_dev=self.boll_std
-        )
-        df["bb_upper"] = bb.bollinger_hband()
-        df["bb_middle"] = bb.bollinger_mavg()
-        df["bb_lower"] = bb.bollinger_lband()
+        try:
+            # Bollinger Bands
+            bb = BollingerBands(
+                close=df["close"],
+                window=self.boll_window,
+                window_dev=self.boll_std
+            )
+            df["bb_upper"] = bb.bollinger_hband().fillna(method='ffill')
+            df["bb_middle"] = bb.bollinger_mavg().fillna(method='ffill')
+            df["bb_lower"] = bb.bollinger_lband().fillna(method='ffill')
 
-        # EMA
-        ema = EMAIndicator(close=df["close"], window=self.ema_window)
-        df["ema"] = ema.ema_indicator()
+            # EMA
+            ema = EMAIndicator(close=df["close"], window=self.ema_window)
+            df["ema"] = ema.ema_indicator().fillna(method='ffill')
 
-        # Stochastic RSI
-        stoch = StochasticRSI(
-            close=df["close"],
-            window=self.stoch_window,
-            smooth1=self.stoch_smooth_k,
-            smooth2=self.stoch_smooth_d
-        )
-        df["stoch_k"] = stoch.stochrsi_k()
-        df["stoch_d"] = stoch.stochrsi_d()
+            # Stochastic RSI
+            stoch = StochasticRSI(
+                close=df["close"],
+                window=self.stoch_window,
+                smooth1=self.stoch_smooth_k,
+                smooth2=self.stoch_smooth_d
+            )
+            df["stoch_k"] = stoch.stochrsi_k().fillna(method='ffill')
+            df["stoch_d"] = stoch.stochrsi_d().fillna(method='ffill')
+
+            # Handle any remaining NaN values
+            for col in ['bb_upper', 'bb_middle', 'bb_lower', 'ema', 'stoch_k', 'stoch_d']:
+                if df[col].isna().any():
+                    df[col] = df[col].fillna(df['close'])
+        except Exception as e:
+            logger.error(f"Error calculating indicators: {e}")
+            # Set default values if calculation fails
+            df["bb_upper"] = df["close"]
+            df["bb_middle"] = df["close"]
+            df["bb_lower"] = df["close"]
+            df["ema"] = df["close"]
+            df["stoch_k"] = 50
+            df["stoch_d"] = 50
 
         return df
 
