@@ -290,6 +290,43 @@ $2.5 × 2 ÷ $400 = 0.0125 BTC ≈ $500 position value
 
 ## Troubleshooting
 
+### Bot Restart & Recovery
+
+Bot aman untuk di-restart kapanpun menggunakan `run.sh` karena memiliki beberapa mekanisme safety:
+
+1. **State Recovery**
+   - Menyimpan status trading di `status/active_trades.json`
+   - Saat restart akan:
+     * Membaca status trading terakhir
+     * Melanjutkan monitoring posisi yang masih terbuka
+     * Tidak membuka posisi duplikat
+
+2. **Graceful Shutdown & Restart**
+   - Memiliki signal handler untuk SIGTERM
+   - Saat restart akan:
+     * Menginisialisasi ulang koneksi ke exchange
+     * Memverifikasi balance
+     * Mengecek health system
+     * Mengirim notifikasi Telegram
+
+3. **Safety Checks**
+   - Sebelum membuka posisi baru:
+     * Verifikasi tidak ada posisi duplikat
+     * Cek balance tersedia
+     * Pastikan tidak melebihi limit trading
+
+4. **Error Recovery**
+   - Circuit breaker aktif jika:
+     * 5 error dalam 10 menit
+     * Auto-recovery setelah timeout
+     * Notifikasi via Telegram
+
+**Prosedur Restart yang Aman:**
+1. Cek error di `logs/trading_bot.log`
+2. Jalankan `./run.sh`
+3. Monitor notifikasi Telegram
+4. Verifikasi status bot
+
 ### Common Issues
 
 1. Network Errors:
