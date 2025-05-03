@@ -39,15 +39,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class SpotTradingBot:
-    async def __init__(self):
-        """Initialize the bot"""
-        self.exchange = self._initialize_exchange()
-        self.strategy = SpotStrategy(**STRATEGY_CONFIG)
+    def __init__(self):
+        """Initialize basic bot attributes"""
+        self.exchange = None
+        self.strategy = None
         self.active_trades = {}
         self.start_time = datetime.now()
         self.monitor = BotStatusMonitor()
         self.last_status_update = 0  # timestamp of last status update
         self.last_health_check = datetime.now()
+
+    async def initialize(self):
+        """Async initialization of bot components"""
+        self.exchange = self._initialize_exchange()
+        self.strategy = SpotStrategy(**STRATEGY_CONFIG)
 
         # Initialize Telegram if enabled
         if TELEGRAM_CONFIG['enabled']:
@@ -55,6 +60,7 @@ class SpotTradingBot:
                 TELEGRAM_CONFIG['bot_token'],
                 TELEGRAM_CONFIG['chat_id']
             )
+        return self
 
     def _initialize_exchange(self) -> ccxt.Exchange:
         """Initialize the exchange connection"""
@@ -549,6 +555,7 @@ class SpotTradingBot:
 if __name__ == '__main__':
     import asyncio
     async def main():
-        bot = await SpotTradingBot()
+        bot = SpotTradingBot()
+        await bot.initialize()
         await bot.run()
     asyncio.run(main())
