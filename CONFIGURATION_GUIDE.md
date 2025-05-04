@@ -49,6 +49,9 @@ Konfigurasi terkait sistem dan koneksi.
 - **`retry_count`**: Jumlah percobaan ulang jika terjadi error koneksi/request.
 - **`retry_delay`**: Jeda waktu antar percobaan ulang (detik).
 - **`rate_limit_buffer`**: Persentase buffer untuk rate limit API (misal: 0.8 = gunakan 80% dari limit).
+- **`main_loop_interval_seconds`**: The target duration (in seconds) for each main processing cycle. The bot will sleep at the end of each cycle to meet this target duration.
+- **`status_update_interval_seconds`**: How frequently (in seconds) the bot logs a detailed status update (e.g., 3600 for every hour).
+- **`health_check_interval_seconds`**: How frequently (in seconds) the bot checks the exchange connection and system health (e.g., 300 for every 5 minutes).
 
 ### e. `LOGGING_CONFIG` (Dict)
 Konfigurasi logging aplikasi.

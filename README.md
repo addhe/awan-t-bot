@@ -111,7 +111,10 @@ SYSTEM_CONFIG = {
     'read_timeout': 30,                # seconds
     'retry_count': 3,                  # Jumlah retry jika gagal
     'retry_delay': 1,                  # Jeda antar retry (seconds)
-    'rate_limit_buffer': 0.8           # Gunakan 80% dari rate limit API
+    'rate_limit_buffer': 0.8,          # Gunakan 80% dari rate limit API
+    'main_loop_interval_seconds': 60,  # Target cycle duration
+    'status_update_interval_seconds': 3600, # Log status every hour
+    'health_check_interval_seconds': 300, # Check health every 5 mins
 }
 
 # Strategy Configuration (Contoh untuk BollStochStrategy)

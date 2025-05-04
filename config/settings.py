@@ -53,6 +53,9 @@ SYSTEM_CONFIG = {
     "retry_count": 3,
     "retry_delay": 1,  # seconds
     "rate_limit_buffer": 0.8,  # 80% of rate limit
+    "main_loop_interval_seconds": 60, # Interval for the main processing loop
+    "status_update_interval_seconds": 3600, # How often to log/send status updates (1 hour)
+    "health_check_interval_seconds": 300, # How often to check exchange/system health (5 minutes)
 }
 
 # Logging configuration

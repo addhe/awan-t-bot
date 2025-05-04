@@ -19,7 +19,6 @@ class BollStochStrategy:
         stoch_window: int = 14,
         stoch_smooth_k: int = 3,
         stoch_smooth_d: int = 3,
-        timeframes: List[str] = ["15m", "1h", "4h", "1d"],
     ):
         self.boll_window = boll_window
         self.boll_std = boll_std
@@ -27,7 +26,6 @@ class BollStochStrategy:
         self.stoch_window = stoch_window
         self.stoch_smooth_k = stoch_smooth_k
         self.stoch_smooth_d = stoch_smooth_d
-        self.timeframes = timeframes
 
     @handle_strategy_errors(notify=True)
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -108,11 +106,11 @@ class BollStochStrategy:
         available_timeframes = list(timeframe_data.keys())
 
         logger.debug(
-            f"Analyzing signals across {len(available_timeframes)} timeframes",
+            f"Analyzing signals across {len(available_timeframes)} available timeframes",
             timeframes=available_timeframes,
         )
 
-        for tf in self.timeframes:
+        for tf in available_timeframes: 
             if tf not in timeframe_data:
                 continue
 
@@ -201,7 +199,8 @@ class BollStochStrategy:
         # Calculate stop loss and take profit levels
         levels = self._calculate_risk_levels(
             signal,
-            timeframe_data["1h"],  # Use 1h timeframe for risk levels
+            # Use the shortest available timeframe's data for levels, or handle missing data
+            timeframe_data.get(min(available_timeframes, key=lambda x: pd.Timedelta(x)), pd.DataFrame()), 
             confidence,
         )
 

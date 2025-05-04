@@ -14,7 +14,6 @@ from config.settings import (
     SYSTEM_CONFIG,
     TELEGRAM_CONFIG,
     EXCHANGE_CONFIG,
-    TIMEFRAMES,
 )
 from src.strategies.boll_stoch_strategy import BollStochStrategy
 from src.exchange.connector import ExchangeConnector
@@ -56,7 +55,7 @@ class TradingBot:
 
         # Initialize strategy
         self.strategy = BollStochStrategy(
-            **STRATEGY_CONFIG, timeframes=TIMEFRAMES
+            **STRATEGY_CONFIG
         )
 
         # Initialize position manager
@@ -72,7 +71,6 @@ class TradingBot:
 
         logger.info(
             "Trading bot initialized successfully",
-            timeframes=TIMEFRAMES,
             pairs=[pair["symbol"] for pair in TRADING_PAIRS],
         )
         return self
@@ -137,7 +135,14 @@ class TradingBot:
 
         # Fetch data for multiple timeframes
         timeframe_data = {}
-        for tf in TIMEFRAMES:
+        pair_timeframes = pair_config.get("timeframes", []) # Get timeframes specific to this pair
+        if not pair_timeframes:
+            logger.warning(f"No timeframes defined for {symbol}", symbol=symbol)
+            return False
+            
+        logger.debug(f"Fetching data for {symbol} on timeframes: {pair_timeframes}", symbol=symbol, timeframes=pair_timeframes)
+        
+        for tf in pair_timeframes: # Use pair-specific timeframes
             df = await self.exchange.fetch_ohlcv(
                 symbol, timeframe=tf, limit=100
             )
@@ -147,9 +152,9 @@ class TradingBot:
 
         if not timeframe_data:
             logger.warning(
-                f"Could not fetch data for {symbol} in any timeframe",
+                f"Could not fetch data for {symbol} in any requested timeframe",
                 symbol=symbol,
-                timeframes=TIMEFRAMES,
+                requested_timeframes=pair_timeframes,
             )
             return False
 
@@ -367,6 +372,18 @@ class TradingBot:
         if TELEGRAM_CONFIG["enabled"]:
             await send_telegram_message("🤖 Trading bot started")
 
+        # Get configured intervals
+        check_interval = SYSTEM_CONFIG.get("main_loop_interval_seconds", 60) 
+        status_update_interval = SYSTEM_CONFIG.get("status_update_interval_seconds", 3600)
+        health_check_interval = SYSTEM_CONFIG.get("health_check_interval_seconds", 300)
+
+        logger.info(
+            "Using intervals (seconds)",
+            main_loop=check_interval,
+            status_update=status_update_interval,
+            health_check=health_check_interval,
+        )
+
         # Register signal handlers
         def signal_handler(signum, frame):
             logger.info(
@@ -453,7 +470,7 @@ class TradingBot:
                 # Calculate cycle time
                 cycle_time = time.time() - cycle_start
                 sleep_time = max(
-                    0, SYSTEM_CONFIG["check_interval"] - cycle_time
+                    0, check_interval - cycle_time
                 )
 
                 logger.debug(
@@ -475,6 +492,6 @@ class TradingBot:
                 )
                 if TELEGRAM_CONFIG["enabled"]:
                     await send_telegram_message(
-                        f"🔴 Error in main loop: {str(e)}"
+                        f"🔴 Error in main loop: {e}"
                     )
                 await asyncio.sleep(SYSTEM_CONFIG["retry_wait"])

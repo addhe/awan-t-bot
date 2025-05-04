@@ -8,27 +8,27 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 from src.core.trading_bot import TradingBot
-from config.settings import LOG_CONFIG
+from config.settings import LOGGING_CONFIG
 
 # Setup logging
 os.makedirs("logs", exist_ok=True)
 
 # Configure root logger
 root_logger = logging.getLogger()
-root_logger.setLevel(LOG_CONFIG["log_level"])
+root_logger.setLevel(LOGGING_CONFIG["level"])
 
 # Remove any existing handlers
 for handler in root_logger.handlers[:]:
     root_logger.removeHandler(handler)
 
 # Create formatters
-log_formatter = logging.Formatter(LOG_CONFIG["log_format"])
+log_formatter = logging.Formatter(LOGGING_CONFIG["format"])
 
 # Create handlers
 file_handler = RotatingFileHandler(
-    LOG_CONFIG["log_file"],
-    maxBytes=LOG_CONFIG["max_file_size"],
-    backupCount=LOG_CONFIG["backup_count"],
+    LOGGING_CONFIG["file"],
+    maxBytes=LOGGING_CONFIG["max_bytes"],
+    backupCount=LOGGING_CONFIG["backup_count"],
 )
 file_handler.setFormatter(log_formatter)
 
