@@ -215,20 +215,29 @@ class TradingBot:
                         "min_quantity": min_quantity,
                     },
                 )
-                return None
+                return False
 
             # Round quantity to required precision
             quantity = round(quantity, pair_config["quantity_precision"])
 
             # Open position
-            _ = self.position_manager.get_position(symbol)
-            # position = await self.position_manager.open_position(
-            #     symbol,
-            #     quantity,
-            #     current_price,
-            #     side="buy",
-            #     pair_config=pair_config,
-            # )
+            try:
+                await self.position_manager.open_position(
+                    symbol=symbol,
+                    quantity=quantity,
+                    entry_price=current_price,
+                    risk_level=risk_levels,
+                    confidence=confidence,
+                    pair_config=pair_config,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to open position for {symbol}: {str(e)}",
+                    symbol=symbol,
+                    error=str(e),
+                    exc_info=True,
+                )
+                return False
 
             # Send notification
             if TELEGRAM_CONFIG["enabled"]:

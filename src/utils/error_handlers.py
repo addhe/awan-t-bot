@@ -2,7 +2,6 @@
 Error handling decorators and utilities for standardized error management.
 """
 
-import logging
 import functools
 import traceback
 from typing import Optional, Dict, Any
@@ -11,8 +10,9 @@ import asyncio
 
 from config.settings import TELEGRAM_CONFIG
 from src.utils.telegram_utils import send_telegram_message
+from src.utils.structured_logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ExchangeError(Exception):
