@@ -28,19 +28,18 @@ The bot implements a sophisticated multi-timeframe analysis strategy using:
 - Trailing stop when in profit
 
 ## Supported Trading Pairs
-- BTC/USDT
-- ETH/USDT
-- SOL/USDT
+- BTC/USDT (`BTCUSDT`)
+- ETH/USDT (`ETHUSDT`)
+- SOL/USDT (`SOLUSDT`)
 
 ## Risk Management
-- 2% max risk per trade
-- Dynamic position sizing
-- Maximum 3 concurrent positions
-- Adaptive stop-loss levels
-- Emergency stop on:
-  - Daily loss > 5%
-  - Drawdown > 15%
-  - 3 consecutive losses
+- Maksimal 3 posisi terbuka bersamaan (`max_open_trades`).
+- Alokasi modal per trade: 5% dari balance (`position_size_pct`).
+- Stop loss: 2% dari harga entry (`stop_loss_pct`).
+- Take profit: 3% dari harga entry (`take_profit_pct`).
+- Trailing stop loss: 1% aktif setelah profit 1% (`trailing_stop_pct`, `trailing_stop_activation_pct`).
+- Daily loss limit: 3% (`daily_loss_limit`).
+- Drawdown protection: 5% (`drawdown_limit`).
 
 ## Technical Features
 - Real-time market data analysis
@@ -82,51 +81,69 @@ src/
    ```
 3. Copy `.env.example` to `.env` and configure:
    ```env
-   API_KEY_BINANCE=your_api_key
-   API_SECRET_BINANCE=your_api_secret
-   TELEGRAM_TOKEN=your_telegram_bot_token
+   BINANCE_API_KEY=your_api_key
+   BINANCE_API_SECRET=your_api_secret
+   TELEGRAM_BOT_TOKEN=your_telegram_bot_token
    TELEGRAM_CHAT_ID=your_chat_id
+   USE_TESTNET=False # Set to True to use testnet
    ```
 
 ## Configuration
 
-### Trading Parameters (`config/settings.py`)
+Konfigurasi utama terdapat dalam file `config/settings.py` dan `.env`. Lihat `CONFIGURATION_GUIDE.md` untuk detail lengkap setiap parameter.
+
+### Contoh Konfigurasi Utama (`config/settings.py`)
 
 ```python
-# Position Sizing
+# Trading Configuration
 TRADING_CONFIG = {
-    'max_open_trades': 3,
-    'stake_currency': 'USDT',
-    'stake_amount': 'dynamic',  # Based on balance
+    'max_open_trades': 3,              # Maksimal posisi terbuka bersamaan
+    'position_size_pct': 0.05,         # Alokasi modal 5% per trade
+    'stop_loss_pct': 0.02,             # Stop loss 2%
+    'take_profit_pct': 0.03,           # Take profit 3%
+    'trailing_stop_pct': 0.01,         # Trailing stop 1%
+    'trailing_stop_activation_pct': 0.01 # Aktifkan trailing stop setelah profit 1%
 }
 
-# Balance-based Position Sizing
-
-> **Catatan:** Implementasi saat ini menggunakan konfigurasi statis dari `config/settings.py`:
-> - Jumlah maksimum posisi terbuka SELALU **3** (parameter `max_open_trades`)
-> - Alokasi per trade: 20% dari saldo (minimal 10 USDT per trade, maksimal 100 USDT per trade)
-> - Tidak ada penyesuaian otomatis jumlah posisi berdasarkan saldo.
-
-Contoh:
-- Modal 100 USDT → maksimal 3 posisi terbuka, masing-masing sekitar 20 USDT.
-- Modal 50 USDT → maksimal 3 posisi terbuka, masing-masing sekitar 10 USDT (jika masih memenuhi minimum exchange).
-- Modal 1000 USDT → maksimal 3 posisi terbuka, masing-masing sekitar 100 USDT (karena dibatasi `max_allocation_usdt`).
-
-Jika ingin membatasi jumlah posisi berdasarkan saldo, silakan ubah manual parameter `max_open_trades` di file konfigurasi.
-```
-
-### Network & Safety (`config/settings.py`)
-
-```python
+# System Configuration
 SYSTEM_CONFIG = {
-    'check_interval': 60,          # seconds
-    'max_requests_per_minute': 45,  # API rate limit
-    'max_orders_per_second': 5,     # Order rate limit
-    'connection_timeout': 10,       # seconds
-    'circuit_timeout': 600,         # 10 minutes timeout
-    'error_threshold': 5            # errors before circuit breaks
+    'connection_timeout': 10,          # seconds
+    'read_timeout': 30,                # seconds
+    'retry_count': 3,                  # Jumlah retry jika gagal
+    'retry_delay': 1,                  # Jeda antar retry (seconds)
+    'rate_limit_buffer': 0.8           # Gunakan 80% dari rate limit API
 }
+
+# Strategy Configuration (Contoh untuk BollStochStrategy)
+STRATEGY_CONFIG = {
+    "boll_length": 20,
+    "boll_std": 2,
+    "ema_length": 50,
+    "stoch_length": 14,
+    "stoch_smooth_k": 3,
+    "stoch_smooth_d": 3,
+    "stoch_oversold": 20,
+    "stoch_overbought": 80,
+}
+
+# Pair Configuration (Contoh)
+TRADING_PAIRS = [
+    {
+        "symbol": "BTCUSDT",
+        "min_quantity": 0.00001,
+        "price_precision": 2,
+        "quantity_precision": 5,
+        "max_position_qty": 0.001,
+        "timeframes": ["1h", "4h"],
+    },
+    # ... konfigurasi pair lainnya
+]
 ```
+
+**Catatan Penting:**
+- Alokasi modal (`position_size_pct`) dihitung berdasarkan persentase dari *total balance* Anda saat trade dibuka.
+- Pastikan nilai `min_quantity` dan `quantity_precision` sesuai dengan aturan exchange.
+- Sesuaikan semua parameter di `config/settings.py` sesuai toleransi risiko dan strategi Anda.
 
 ## Usage
 
@@ -217,98 +234,6 @@ Profit: 2.15%
 - Exponential backoff
 - Connection timeouts
 - Automatic retry with backoff
-
-## Known Limitations
-
-1. High volatility periods may result in:
-   - Wider stops
-   - Lower position sizes
-   - More false signals
-
-2. Market conditions where the strategy performs poorly:
-   - Choppy, sideways markets
-   - Extreme volatility events
-   - Low liquidity periods
-
-## Disclaimer
-
-**⚠️ HIGH RISK WARNING**
-
-This is a sophisticated trading bot operating on cryptocurrency spot markets. Significant financial losses are possible. Only use this if you:
-- Fully understand the implemented strategy
-- Have extensive crypto spot trading experience
-- Can afford to lose the capital you're trading with
-- Have thoroughly tested in paper trading first
-
-The developers assume no responsibility for any financial losses.
-
-## Strategy Details
-
-### Multi-Timeframe Analysis
-- Primary: 1h timeframe
-- Confirmation: 4h timeframe
-- Trend: 1d timeframe
-
-### Entry Conditions
-1. Bollinger Bands squeeze
-2. Stochastic RSI crossover
-3. EMA trend confirmation
-4. Volume confirmation
-
-### Exit Conditions
-1. Take Profit: Dynamic (1.8% - 3.0%)
-2. Stop Loss: Dynamic (1.2% - 2.0%)
-3. Trailing stop when in profit
-
-### Risk Management & Position Sizing
-
-#### Balance Requirements
-- Minimum recommended: $100 USDT
-- Optimal recommended: $500 USDT
-
-#### Position Size Calculation
-Example with $500 USDT balance:
-- Risk per trade: 0.5% = $2.5 USDT
-- Stop loss: 1%
-- Leverage: 2x
-```
-Position size = (Risk × Leverage) ÷ Stop Loss
-For BTC at $40,000:
-$2.5 × 2 ÷ $400 = 0.0125 BTC ≈ $500 position value
-```
-
-#### Risk Controls
-1. **Daily Loss Limit**: 3%
-   - With $500 balance = $15 max daily loss
-   - Bot stops trading if reached
-
-2. **Drawdown Protection**: 5%
-   - Maximum drawdown = $25 on $500
-   - Size reduction or trading pause
-
-3. **Volatility Adjustments**
-   - High volatility (>5%): Size -30%
-   - Low volatility (<2%): Size +20%
-
-#### Take Profit Strategy
-1. **Partial TP 1** (70% of position)
-   - Target: 1% profit
-   - Example: $350 from $500 position
-
-2. **Partial TP 2** (30% of position)
-   - Target: 2% profit
-   - Example: Remaining $150
-
-#### Trailing Stop
-- Activates at 1% profit
-- Follows price at 0.5% distance
-- Helps secure profits in trends
-
-#### Trading Limits
-- Max 3 simultaneous positions
-- Max 5 trades per day
-- Min market volume: $5,000
-- Excluded hours: 00:00, 01:00, 23:00 UTC
 
 ## Troubleshooting
 

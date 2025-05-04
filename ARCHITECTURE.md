@@ -9,7 +9,7 @@ This document describes the high-level architecture of the trading bot codebase,
 ```
 awan-t-bot/
 ├── bot.py                # Main entry point
-├── config/               # Configuration files (settings, strategies, exchange)
+├── config/               # Configuration files (settings.py)
 ├── src/
 │   ├── core/             # Core trading logic (trading bot, position management)
 │   ├── exchange/         # Exchange connectors and API integration
@@ -29,9 +29,8 @@ awan-t-bot/
 - **`bot.py`**: Script to start the trading bot. Initializes components and runs the main event loop.
 
 ### b. Configuration
-- **`config/settings.py`**: Trading parameters (max positions, allocation, etc).
-- **`config/strategy_config.py`**: Strategy-specific settings.
-- **`.env`**: API keys and sensitive credentials.
+- **`config/settings.py`**: File konfigurasi utama berisi semua parameter trading, strategi, sistem, exchange, logging, dan Telegram.
+- **`.env`**: API keys dan sensitive credentials.
 
 ### c. Core Logic (`src/core/`)
 - **`trading_bot.py`**: Orchestrates the trading process (initialization, main loop, signal handling, order execution, monitoring).
@@ -41,7 +40,7 @@ awan-t-bot/
 - **`connector.py`**: Handles communication with the exchange API (order placement, fetching balances, etc).
 
 ### e. Strategies (`src/strategies/`)
-- **`boll_stoch_strategy.py`**, **`spot_strategy.py`**: Implements trading signal logic, indicator calculation (Bollinger Bands, EMA, Stochastic RSI, etc), and buy/sell decision-making.
+- **`boll_stoch_strategy.py`**, **`spot_strategy.py`**: Implements trading signal logic, indicator calculation (Bollinger Bands, EMA, Stochastic RSI, etc), and buy/sell decision-making. Parameter strategi dikonfigurasi dalam `config/settings.py`.
 
 ### f. Utilities (`src/utils/`)
 - **`status_monitor.py`**: Tracks and logs bot/trade status to files.
@@ -67,9 +66,9 @@ awan-t-bot/
 ---
 
 ## 4. Extensibility
-- **Add new strategies**: Place new strategy modules in `src/strategies/` and update configuration.
-- **Support new exchanges**: Implement new connector in `src/exchange/`.
-- **Custom risk management**: Extend `position_manager.py` or add new modules in `src/core/` or `src/risk_management.py`.
+- **Add new strategies**: Place new strategy modules in `src/strategies/` and configure their parameters within `config/settings.py`.
+- **Support new exchanges**: Implement new connector in `src/exchange/` and update configuration in `config/settings.py`.
+- **Custom risk management**: Extend `position_manager.py` or add new modules in `src/core/` or `src/risk_management.py` (jika dibuat).
 
 ---
 

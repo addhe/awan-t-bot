@@ -8,8 +8,7 @@ Dokumen ini memberikan gambaran singkat setiap modul utama dalam codebase tradin
 - Entry point utama. Menginisialisasi bot, memuat konfigurasi, menjalankan event loop.
 
 ## config/
-- settings.py: Parameter utama trading (jumlah posisi, alokasi, dsb).
-- strategy_config.py: Parameter strategi.
+- settings.py: Parameter utama trading (jumlah posisi, alokasi, parameter strategi, sistem, exchange, dsb).
 
 ## src/core/
 - trading_bot.py: Orkestrasi bot, main loop, eksekusi sinyal, monitoring.
@@ -19,7 +18,7 @@ Dokumen ini memberikan gambaran singkat setiap modul utama dalam codebase tradin
 - connector.py: Integrasi API exchange (order, saldo, data harga).
 
 ## src/strategies/
-- boll_stoch_strategy.py, spot_strategy.py: Logika sinyal trading, indikator teknikal, buy/sell decision.
+- boll_stoch_strategy.py, spot_strategy.py: Logika sinyal trading, indikator teknikal, buy/sell decision. Parameter diatur di `config/settings.py`.
 
 ## src/utils/
 - status_monitor.py: Logging status bot dan trade.
