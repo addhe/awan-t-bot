@@ -49,13 +49,13 @@ def mock_exchange():
     df["ema"] = [34200, 34700]
     df["stoch_k"] = [85, 75]
     df["stoch_d"] = [80, 85]
-    
+
     # Setup fetch_ohlcv as AsyncMock
     mock.fetch_ohlcv = AsyncMock(return_value=df)
-    
+
     # Setup fetch_open_orders as AsyncMock
     mock.fetch_open_orders = AsyncMock(return_value=[])
-    
+
     # Setup cancel_order as AsyncMock
     mock.cancel_order = AsyncMock(return_value=True)
 
@@ -208,7 +208,7 @@ class TestPositionManager:
             "average_price": 36000,
             "filled_quantity": 0.01,
         })
-        
+
         # Mock get_current_price for _update_trades_status call
         mock_exchange.get_current_price = AsyncMock(return_value=36000)
 

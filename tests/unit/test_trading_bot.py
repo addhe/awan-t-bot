@@ -128,7 +128,7 @@ def trading_bot(
     # Create bot instance and inject mock monitor
     bot = TradingBot()
     bot.monitor = mock_monitor
-    
+
     # Explicitly set exchange, strategy, and position_manager
     bot.exchange = mock_exchange
     bot.strategy = mock_strategy
