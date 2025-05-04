@@ -33,124 +33,152 @@ class SpotStrategy:
         self.stop_loss = stop_loss
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate technical indicators"""
-        try:
-            # Bollinger Bands
-            bb = BollingerBands(
-                close=df["close"],
-                window=self.boll_window,
-                window_dev=self.boll_std
-            )
-            df["bb_upper"] = bb.bollinger_hband()
-            df["bb_middle"] = bb.bollinger_mavg()
-            df["bb_lower"] = bb.bollinger_lband()
+    """Calculate technical indicators with fallback for missing/NaN columns."""
+    try:
+        # Bollinger Bands
+        bb = BollingerBands(
+            close=df["close"],
+            window=self.boll_window,
+            window_dev=self.boll_std
+        )
+        df["bb_upper"] = bb.bollinger_hband()
+        df["bb_middle"] = bb.bollinger_mavg()
+        df["bb_lower"] = bb.bollinger_lband()
 
-            # EMA
-            ema = EMAIndicator(close=df["close"], window=self.ema_window)
-            df["ema"] = ema.ema_indicator()
+        # EMA
+        ema = EMAIndicator(close=df["close"], window=self.ema_window)
+        df["ema"] = ema.ema_indicator()
 
-            # Stochastic RSI
-            stoch = StochRSIIndicator(
-                close=df["close"],
-                window=self.stoch_window,
-                smooth1=self.stoch_smooth_k,
-                smooth2=self.stoch_smooth_d
-            )
-            df["stoch_k"] = stoch.stochrsi_k()
-            df["stoch_d"] = stoch.stochrsi_d()
+        # Stochastic RSI
+        stoch = StochRSIIndicator(
+            close=df["close"],
+            window=self.stoch_window,
+            smooth1=self.stoch_smooth_k,
+            smooth2=self.stoch_smooth_d
+        )
+        df["stoch_k"] = stoch.stochrsi_k()
+        df["stoch_d"] = stoch.stochrsi_d()
 
-            return df
+        # Fallback: pastikan semua kolom indikator utama ada dan isi NaN dengan harga close
+        required_cols = ["bb_upper", "bb_middle", "bb_lower", "ema", "stoch_k", "stoch_d"]
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = df["close"]
+            else:
+                df[col] = df[col].fillna(df["close"])
 
-        except Exception as e:
-            logging.error(f"Error calculating indicators: {e}")
-            raise
+        return df
+
+    except Exception as e:
+        logging.error(f"Error calculating indicators: {e}")
+        # Fallback: jika error, pastikan semua kolom minimal diisi harga close
+        required_cols = ["bb_upper", "bb_middle", "bb_lower", "ema", "stoch_k", "stoch_d"]
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = df["close"]
+            else:
+                df[col] = df[col].fillna(df["close"])
+        return df
+
 
     def should_buy(self, df: pd.DataFrame) -> Tuple[bool, float, Dict[str, float]]:
-        """
-        Check if we should buy based on our strategy
-        Returns: (should_buy, confidence, levels)
-        """
-        try:
-            if len(df) < 2:
-                return False, 0, {}
-
-            current_price = df["close"].iloc[-1]
-            bb_lower = df["bb_lower"].iloc[-1]
-            bb_middle = df["bb_middle"].iloc[-1]
-            ema = df["ema"].iloc[-1]
-            stoch_k = df["stoch_k"].iloc[-1]
-            stoch_d = df["stoch_d"].iloc[-1]
-
-            # Buy conditions
-            conditions = [
-                current_price < bb_lower,     # Price below lower BB
-                current_price > ema,          # Price above EMA
-                stoch_k < 20,                # Oversold
-                stoch_k > stoch_d,           # Stoch crossover
-            ]
-
-            confidence = sum(conditions) / len(conditions)
-
-            if confidence >= 0.75:  # At least 3 out of 4 conditions
-                # Calculate take profit and stop loss
-                take_profit = current_price * (1 + self.min_profit)
-                stop_loss = current_price * (1 - self.stop_loss)
-
-                return True, confidence, {
-                    "entry": current_price,
-                    "take_profit": take_profit,
-                    "stop_loss": stop_loss
-                }
-
-            return False, confidence, {}
-
-        except Exception as e:
-            logging.error(f"Error in should_buy: {e}")
+    """
+    Check if we should buy based on our strategy (safe with fallback for missing/NaN columns)
+    Returns: (should_buy, confidence, levels)
+    """
+    try:
+        if len(df) < 2:
             return False, 0, {}
 
+        # Kolom indikator utama
+        required_cols = ["bb_lower", "bb_middle", "ema", "stoch_k", "stoch_d"]
+        for col in required_cols:
+            if col not in df.columns or pd.isna(df[col].iloc[-1]):
+                logging.warning(f"{col} not found or NaN in should_buy, fallback to close value")
+                df[col] = df["close"]
+        current_price = df["close"].iloc[-1]
+        bb_lower = df["bb_lower"].iloc[-1]
+        bb_middle = df["bb_middle"].iloc[-1]
+        ema = df["ema"].iloc[-1]
+        stoch_k = df["stoch_k"].iloc[-1]
+        stoch_d = df["stoch_d"].iloc[-1]
+
+        # Buy conditions
+        conditions = [
+            current_price < bb_lower,     # Price below lower BB
+            current_price < bb_middle,    # Price below BB middle
+            current_price > ema,          # Price above EMA
+            stoch_k < 20 and stoch_k < stoch_d, # Stoch oversold cross
+        ]
+
+        confidence = sum(conditions) / len(conditions)
+
+        if confidence >= 0.75:  # At least 3 out of 4 conditions
+            # Calculate take profit and stop loss
+            take_profit = current_price * (1 + self.min_profit)
+            stop_loss = current_price * (1 - self.stop_loss)
+
+            return True, confidence, {
+                "entry": current_price,
+                "take_profit": take_profit,
+                "stop_loss": stop_loss
+            }
+
+        return False, confidence, {}
+
+    except Exception as e:
+        logging.error(f"Error in should_buy: {e}")
+        return False, 0, {}
+
+
     def should_sell(self, df: pd.DataFrame, buy_price: float = None) -> Tuple[bool, float]:
-        """
-        Check if we should sell based on our strategy
-        Returns: (should_sell, confidence)
-        """
-        try:
-            if len(df) < 2:
-                return False, 0
-
-            current_price = df["close"].iloc[-1]
-            bb_upper = df["bb_upper"].iloc[-1]
-            bb_middle = df["bb_middle"].iloc[-1]
-            ema = df["ema"].iloc[-1]
-            stoch_k = df["stoch_k"].iloc[-1]
-            stoch_d = df["stoch_d"].iloc[-1]
-
-            # If we have a buy price, check stop loss and take profit
-            if buy_price:
-                profit_pct = (current_price - buy_price) / buy_price
-
-                # Stop loss hit
-                if profit_pct <= -self.stop_loss:
-                    return True, 1.0
-
-                # Take profit hit
-                if profit_pct >= self.min_profit:
-                    return True, 1.0
-
-            # Regular sell conditions
-            conditions = [
-                current_price > bb_upper,     # Price above upper BB
-                current_price < ema,          # Price below EMA
-                stoch_k > 80,                # Overbought
-                stoch_k < stoch_d,           # Stoch crossunder
-            ]
-
-            confidence = sum(conditions) / len(conditions)
-
-            return confidence >= 0.75, confidence
-
-        except Exception as e:
-            logging.error(f"Error in should_sell: {e}")
+    """
+    Check if we should sell based on our strategy (safe with fallback for missing/NaN columns)
+    Returns: (should_sell, confidence)
+    """
+    try:
+        if len(df) < 2:
             return False, 0
+
+        # Kolom indikator utama
+        required_cols = ["bb_upper", "bb_middle", "ema", "stoch_k", "stoch_d"]
+        for col in required_cols:
+            if col not in df.columns or pd.isna(df[col].iloc[-1]):
+                logging.warning(f"{col} not found or NaN in should_sell, fallback to close value")
+                df[col] = df["close"]
+        current_price = df["close"].iloc[-1]
+        bb_upper = df["bb_upper"].iloc[-1]
+        bb_middle = df["bb_middle"].iloc[-1]
+        ema = df["ema"].iloc[-1]
+        stoch_k = df["stoch_k"].iloc[-1]
+        stoch_d = df["stoch_d"].iloc[-1]
+
+        # If we have a buy price, check stop loss and take profit
+        if buy_price:
+            profit_pct = (current_price - buy_price) / buy_price
+            if profit_pct <= -self.stop_loss:
+                return True, 1.0
+
+            # Take profit hit
+            if profit_pct >= self.min_profit:
+                return True, 1.0
+
+        # Regular sell conditions
+        conditions = [
+            current_price > bb_upper,     # Price above upper BB
+            current_price < ema,          # Price below EMA
+            stoch_k > 80,                # Overbought
+            stoch_k < stoch_d,           # Stoch crossunder
+        ]
+
+        confidence = sum(conditions) / len(conditions)
+
+        return confidence >= 0.75, confidence
+
+    except Exception as e:
+        logging.error(f"Error in should_sell: {e}")
+        return False, 0
+
 
     def calculate_position_size(self, balance: float, current_price: float, symbol: str) -> Tuple[float, Dict[str, Any]]:
         """Calculate the position size based on available balance with smart allocation"""
