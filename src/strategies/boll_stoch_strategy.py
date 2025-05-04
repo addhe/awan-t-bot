@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import Dict, List, Tuple, Any
 from ta.volatility import BollingerBands
-from ta.momentum import StochasticRSI
+from ta.momentum import StochRSIIndicator
 from ta.trend import EMAIndicator
 
 from src.utils.error_handlers import handle_strategy_errors
@@ -58,7 +58,7 @@ class BollStochStrategy:
         df["ema"] = ema.ema_indicator().fillna(method="ffill")
 
         # Stochastic RSI
-        stoch = StochasticRSI(
+        stoch = StochRSIIndicator(
             close=df["close"],
             window=self.stoch_window,
             smooth1=self.stoch_smooth_k,
