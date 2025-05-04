@@ -206,6 +206,7 @@ class TestTradingBot:
             "symbol": "BTC/USDT",
             "min_quantity": 0.001,
             "quantity_precision": 5,
+            "timeframes": ["15m", "1h"]  # Add timeframes to config
         }
         result = await bot.process_pair(pair_config)
 
@@ -235,6 +236,7 @@ class TestTradingBot:
             "symbol": "BTC/USDT",
             "min_quantity": 0.001,
             "quantity_precision": 5,
+            "timeframes": ["15m", "1h"]  # Add timeframes to config
         }
         result = await bot.process_pair(pair_config)
 

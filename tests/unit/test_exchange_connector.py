@@ -152,8 +152,9 @@ class TestExchangeConnector:
         )
 
         # Validate result
-        assert order["id"] == "test_order_id"
-        assert order["side"] == "buy"
+        assert order["order_id"] == "test_order_id"
+        assert "average_price" in order
+        assert "filled_quantity" in order
 
     @pytest.mark.asyncio
     async def test_place_market_sell(self, exchange_connector, mock_ccxt):
@@ -169,8 +170,9 @@ class TestExchangeConnector:
         )
 
         # Validate result
-        assert order["id"] == "test_order_id"
-        assert order["side"] == "sell"
+        assert order["order_id"] == "test_order_id"
+        assert "average_price" in order
+        assert "filled_quantity" in order
 
     @pytest.mark.asyncio
     async def test_network_error_handling(self, exchange_connector, mock_ccxt):
