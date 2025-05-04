@@ -65,6 +65,30 @@ class ExchangeConnector:
                 f"Failed to initialize exchange: {e}", exc_info=True
             )
             raise
+            
+    def _safe_async_call(self, method_name, *args, **kwargs):
+        """Safely call a method that might be async or sync
+        
+        Args:
+            method_name: Name of the method to call on self.exchange
+            *args: Arguments to pass to the method
+            **kwargs: Keyword arguments to pass to the method
+            
+        Returns:
+            Result of the method call
+        """
+        method = getattr(self.exchange, method_name)
+        try:
+            # Try to call as async
+            return method(*args, **kwargs)
+        except TypeError as e:
+            if "can't be used in 'await' expression" in str(e):
+                # If not async, call as sync
+                logger.debug(f"{method_name} is not a coroutine, calling as normal function")
+                return method(*args, **kwargs)
+            else:
+                # If other error, re-raise
+                raise
 
     @rate_limited_api()
     @handle_exchange_errors(notify=False)
@@ -83,7 +107,7 @@ class ExchangeConnector:
             DataFrame with OHLCV data or empty DataFrame on failure.
         """
         # Timeouts are now set during initialization
-        ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        ohlcv = await self._safe_async_call('fetch_ohlcv', symbol, timeframe, limit=limit)
         # handle_exchange_errors returns None on failure after retries
         if ohlcv is None:
             logger.warning(
@@ -121,7 +145,7 @@ class ExchangeConnector:
         Returns:
             Ticker information or None if error after retries.
         """
-        ticker = await self.exchange.fetch_ticker(symbol)
+        ticker = await self._safe_async_call('fetch_ticker', symbol)
         if ticker:
             logger.debug(
                 f"Fetched ticker for {symbol}",
@@ -202,7 +226,7 @@ class ExchangeConnector:
             # Ensure quantity precision is respected if needed (depends on exchange)
             # quantity = self.exchange.amount_to_precision(symbol, quantity)
             
-            order = await self.exchange.create_market_buy_order(symbol, quantity)
+            order = await self._safe_async_call('create_market_buy_order', symbol, quantity)
             
             order_id = order.get("id")
             avg_price = order.get("average")
@@ -262,7 +286,7 @@ class ExchangeConnector:
             # Ensure quantity precision is respected
             # quantity = self.exchange.amount_to_precision(symbol, quantity)
 
-            order = await self.exchange.create_market_sell_order(symbol, quantity)
+            order = await self._safe_async_call('create_market_sell_order', symbol, quantity)
             
             order_id = order.get("id")
             avg_price = order.get("average")
@@ -311,7 +335,7 @@ class ExchangeConnector:
             Cancellation information dict or None if cancellation fails after retries.
         """
         # Decorators now handle errors and retries
-        result = await self.exchange.cancel_order(order_id, symbol)
+        result = await self._safe_async_call('cancel_order', order_id, symbol)
         if result:
              logger.info(f"Successfully cancelled order {order_id} for {symbol}", 
                          order_id=order_id, symbol=symbol)
@@ -331,7 +355,7 @@ class ExchangeConnector:
             List of open orders or None if fetch fails after retries.
         """
         # Decorators now handle errors and retries
-        orders = await self.exchange.fetch_open_orders(symbol)
+        orders = await self._safe_async_call('fetch_open_orders', symbol)
         if orders is not None: # Check if fetch was successful (not None)
              logger.debug(f"Fetched {len(orders)} open orders for {symbol}", 
                           symbol=symbol, count=len(orders))
