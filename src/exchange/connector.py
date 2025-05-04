@@ -171,46 +171,114 @@ class ExchangeConnector:
     async def place_market_buy(
         self, symbol: str, quantity: float
     ) -> Dict[str, Any]:
-        """Place a market buy order
+        """Place a market buy order and return execution details.
 
         Args:
             symbol: Trading pair symbol
             quantity: Order quantity
 
         Returns:
-            Order information
+            Dict containing order details: 
+            {'order_id', 'symbol', 'average_price', 'filled_quantity'}
+            Returns empty dict on failure before execution.
         """
-        order = self.exchange.create_market_buy_order(symbol, quantity)
-        logger.info(
-            f"Placed market buy order for {quantity} {symbol}",
-            symbol=symbol,
-            quantity=quantity,
-            order_id=order.get("id"),
-        )
-        return order
+        try:
+            # Ensure quantity precision is respected if needed (depends on exchange)
+            # quantity = self.exchange.amount_to_precision(symbol, quantity)
+            
+            order = await self.exchange.create_market_buy_order(symbol, quantity)
+            
+            order_id = order.get("id")
+            avg_price = order.get("average")
+            filled_qty = order.get("filled")
+
+            if order_id is None or avg_price is None or filled_qty is None:
+                logger.warning(
+                    f"Market buy order for {symbol} executed but details missing.",
+                    symbol=symbol,
+                    quantity=quantity,
+                    order_data=order,
+                )
+                # Fallback or decide how to handle incomplete data
+                # For now, return potentially incomplete dict but log it.
+
+            logger.info(
+                f"Placed market buy order for {symbol}",
+                symbol=symbol,
+                requested_quantity=quantity,
+                filled_quantity=filled_qty,
+                average_price=avg_price,
+                order_id=order_id,
+            )
+            
+            return {
+                "order_id": order_id,
+                "symbol": symbol,
+                "average_price": avg_price,
+                "filled_quantity": filled_qty,
+            }
+        except Exception as e:
+            # Handle_exchange_errors decorator will catch this, 
+            # but logging specific context here can be useful.
+            logger.error(f"Failed to place market buy order for {symbol}: {e}", 
+                         symbol=symbol, quantity=quantity, exc_info=True)
+            # Re-raise or return indication of failure if decorator doesn't handle it fully
+            raise # Let the decorator handle notification/reraising
 
     @rate_limited_api()
     @handle_exchange_errors(notify=True)
     async def place_market_sell(
         self, symbol: str, quantity: float
     ) -> Dict[str, Any]:
-        """Place a market sell order
+        """Place a market sell order and return execution details.
 
         Args:
             symbol: Trading pair symbol
             quantity: Order quantity
 
         Returns:
-            Order information
+            Dict containing order details: 
+            {'order_id', 'symbol', 'average_price', 'filled_quantity'}
+            Returns empty dict on failure before execution.
         """
-        order = self.exchange.create_market_sell_order(symbol, quantity)
-        logger.info(
-            f"Placed market sell order for {quantity} {symbol}",
-            symbol=symbol,
-            quantity=quantity,
-            order_id=order.get("id"),
-        )
-        return order
+        try:
+            # Ensure quantity precision is respected
+            # quantity = self.exchange.amount_to_precision(symbol, quantity)
+
+            order = await self.exchange.create_market_sell_order(symbol, quantity)
+            
+            order_id = order.get("id")
+            avg_price = order.get("average")
+            filled_qty = order.get("filled")
+
+            if order_id is None or avg_price is None or filled_qty is None:
+                logger.warning(
+                    f"Market sell order for {symbol} executed but details missing.",
+                    symbol=symbol,
+                    quantity=quantity,
+                    order_data=order,
+                )
+                # Fallback or decide how to handle incomplete data
+
+            logger.info(
+                f"Placed market sell order for {symbol}",
+                symbol=symbol,
+                requested_quantity=quantity,
+                filled_quantity=filled_qty,
+                average_price=avg_price,
+                order_id=order_id,
+            )
+            
+            return {
+                "order_id": order_id,
+                "symbol": symbol,
+                "average_price": avg_price,
+                "filled_quantity": filled_qty,
+            }
+        except Exception as e:
+            logger.error(f"Failed to place market sell order for {symbol}: {e}", 
+                         symbol=symbol, quantity=quantity, exc_info=True)
+            raise # Let the decorator handle notification/reraising
 
     @rate_limited_api()
     async def cancel_order(self, order_id: str, symbol: str) -> Dict[str, Any]:
