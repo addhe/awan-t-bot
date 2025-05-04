@@ -46,17 +46,23 @@ class ExchangeConnector:
                     "apiKey": self.config["api_key"],
                     "secret": self.config["api_secret"],
                     "enableRateLimit": True,
+                    # Set timeouts during initialization
+                    "options": {
+                        "timeout": self.system_config.get("connection_timeout", 30) * 1000,
+                        "recvWindow": self.system_config.get("read_timeout", 30) * 1000,
+                    }
                 }
             )
 
             if self.config["testnet"]:
                 exchange.set_sandbox_mode(True)
 
+            logger.info(f"Initialized {self.config['name']} exchange. Testnet: {self.config['testnet']}")
             return exchange
 
         except Exception as e:
             logger.error(
-                f"Failed to initialize exchange: {e}"
+                f"Failed to initialize exchange: {e}", exc_info=True
             )
             raise
 
@@ -74,24 +80,18 @@ class ExchangeConnector:
             limit: Number of candles to fetch
 
         Returns:
-            DataFrame with OHLCV data
+            DataFrame with OHLCV data or empty DataFrame on failure.
         """
-        # Configure timeouts
-        self.exchange.options["timeout"] = (
-            self.system_config["connection_timeout"] * 1000
-        )
-        self.exchange.options["recvWindow"] = (
-            self.system_config["read_timeout"] * 1000
-        )
-
-        ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        if not ohlcv:
+        # Timeouts are now set during initialization
+        ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        # handle_exchange_errors returns None on failure after retries
+        if ohlcv is None:
             logger.warning(
-                f"No OHLCV data returned for {symbol}",
+                f"Failed to fetch OHLCV data for {symbol} after retries.",
                 symbol=symbol,
                 timeframe=timeframe,
             )
-            return pd.DataFrame()
+            return pd.DataFrame() # Return empty dataframe as per docstring
 
         df = pd.DataFrame(
             ohlcv,
@@ -108,6 +108,54 @@ class ExchangeConnector:
         )
 
         return df
+
+    @rate_limited_api()
+    @handle_exchange_errors(notify=False) # Notify false, as price is often polled
+    @retry_with_backoff(max_retries=3) # Added retry
+    async def get_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Get current ticker information for a symbol
+
+        Args:
+            symbol: Trading pair symbol
+
+        Returns:
+            Ticker information or None if error after retries.
+        """
+        ticker = await self.exchange.fetch_ticker(symbol)
+        if ticker:
+            logger.debug(
+                f"Fetched ticker for {symbol}",
+                symbol=symbol,
+                last_price=ticker.get("last"),
+            )
+        # handle_exchange_errors returns None on failure
+        return ticker
+
+    @rate_limited_api() # Added rate limit consistency
+    @handle_exchange_errors(notify=False)
+    @retry_with_backoff(max_retries=3) # Added retry consistency
+    async def get_current_price(self, symbol: str) -> float:
+        """Get current price for a symbol
+
+        Args:
+            symbol: Trading pair symbol
+
+        Returns:
+            Current price or 0 if error after retries.
+        """
+        ticker = await self.get_ticker(symbol)
+        # get_ticker now returns None on failure after retries
+        if ticker and "last" in ticker and ticker["last"] is not None:
+            try:
+                price = float(ticker["last"])
+                return price
+            except (ValueError, TypeError) as e:
+                 logger.warning(f"Could not convert last price '{ticker['last']}' to float for {symbol}: {e}",
+                              symbol=symbol, ticker_price=ticker['last'])
+                 return 0.0 # Return 0 if conversion fails
+        else:
+            logger.warning(f"Could not get ticker or last price for {symbol} after retries.", symbol=symbol)
+            return 0.0 # Return 0 if ticker failed or no last price
 
     @rate_limited_api()
     @handle_exchange_errors(notify=True)
@@ -134,40 +182,8 @@ class ExchangeConnector:
         return balances
 
     @rate_limited_api()
-    @handle_exchange_errors(notify=False)
-    async def get_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Get current ticker information for a symbol
-
-        Args:
-            symbol: Trading pair symbol
-
-        Returns:
-            Ticker information or None if error
-        """
-        ticker = self.exchange.fetch_ticker(symbol)
-        logger.debug(
-            f"Fetched ticker for {symbol}",
-            symbol=symbol,
-            last_price=ticker.get("last"),
-        )
-        return ticker
-
-    @handle_exchange_errors(notify=False)
-    async def get_current_price(self, symbol: str) -> float:
-        """Get current price for a symbol
-
-        Args:
-            symbol: Trading pair symbol
-
-        Returns:
-            Current price or 0 if error
-        """
-        ticker = await self.get_ticker(symbol)
-        price = float(ticker["last"]) if ticker and "last" in ticker else 0
-        return price
-
-    @rate_limited_api()
     @handle_exchange_errors(notify=True)
+    @retry_with_backoff(max_retries=3)
     async def place_market_buy(
         self, symbol: str, quantity: float
     ) -> Dict[str, Any]:
@@ -227,6 +243,7 @@ class ExchangeConnector:
 
     @rate_limited_api()
     @handle_exchange_errors(notify=True)
+    @retry_with_backoff(max_retries=3)
     async def place_market_sell(
         self, symbol: str, quantity: float
     ) -> Dict[str, Any]:
@@ -281,7 +298,9 @@ class ExchangeConnector:
             raise # Let the decorator handle notification/reraising
 
     @rate_limited_api()
-    async def cancel_order(self, order_id: str, symbol: str) -> Dict[str, Any]:
+    @handle_exchange_errors(notify=True) # Added error handler
+    @retry_with_backoff(max_retries=3) # Added retry
+    async def cancel_order(self, order_id: str, symbol: str) -> Optional[Dict[str, Any]]:
         """Cancel an open order
 
         Args:
@@ -289,30 +308,32 @@ class ExchangeConnector:
             symbol: Trading pair symbol
 
         Returns:
-            Cancellation information
+            Cancellation information dict or None if cancellation fails after retries.
         """
-        try:
-            return self.exchange.cancel_order(order_id, symbol)
-        except Exception as e:
-            logger.error(
-                f"Error cancelling order {order_id} for {symbol}: {e}"
-            )
-            raise
+        # Decorators now handle errors and retries
+        result = await self.exchange.cancel_order(order_id, symbol)
+        if result:
+             logger.info(f"Successfully cancelled order {order_id} for {symbol}", 
+                         order_id=order_id, symbol=symbol)
+        # handle_exchange_errors returns None on failure
+        return result
 
     @rate_limited_api()
-    async def fetch_open_orders(self, symbol: str) -> list:
+    @handle_exchange_errors(notify=False) # Added error handler
+    @retry_with_backoff(max_retries=3) # Added retry
+    async def fetch_open_orders(self, symbol: str) -> Optional[list]:
         """Fetch open orders for a symbol
 
         Args:
             symbol: Trading pair symbol
 
         Returns:
-            List of open orders
+            List of open orders or None if fetch fails after retries.
         """
-        try:
-            return self.exchange.fetch_open_orders(symbol)
-        except Exception as e:
-            logger.error(
-                f"Error fetching open orders for {symbol}: {e}"
-            )
-            return []
+        # Decorators now handle errors and retries
+        orders = await self.exchange.fetch_open_orders(symbol)
+        if orders is not None: # Check if fetch was successful (not None)
+             logger.debug(f"Fetched {len(orders)} open orders for {symbol}", 
+                          symbol=symbol, count=len(orders))
+        # handle_exchange_errors returns None on failure
+        return orders
