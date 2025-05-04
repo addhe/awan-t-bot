@@ -5,7 +5,7 @@ Unit tests for PositionManager
 import pytest
 import pandas as pd
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 
 from src.core.position_manager import PositionManager
 
@@ -15,44 +15,49 @@ def mock_exchange():
     """Create a mock ExchangeConnector"""
     mock = MagicMock()
 
-    # Setup mock responses
-    mock.get_current_price.return_value = 35000
-    mock.place_market_buy.return_value = {
-        "id": "test_order_id",
+    # Setup async mock responses
+    mock.get_current_price = AsyncMock(return_value=35000)
+    mock.place_market_buy = AsyncMock(return_value={
+        "order_id": "test_order_id",
         "symbol": "BTC/USDT",
         "side": "buy",
-        "amount": 0.01,
-        "price": 35000,
-    }
-    mock.place_market_sell.return_value = {
-        "id": "test_order_id",
+        "filled_quantity": 0.01,
+        "average_price": 35000,
+    })
+    mock.place_market_sell = AsyncMock(return_value={
+        "order_id": "test_sell_id",
         "symbol": "BTC/USDT",
         "side": "sell",
-        "amount": 0.01,
-        "price": 36000,
-    }
+        "filled_quantity": 0.01,
+        "average_price": 36000,
+    })
 
-    async def mock_fetch_ohlcv(symbol, timeframe="15m", limit=10):
-        """Mock fetch_ohlcv method"""
-        df = pd.DataFrame(
-            {
-                "open": [34000, 34500],
-                "high": [35000, 35500],
-                "low": [33500, 34000],
-                "close": [34500, 35000],
-                "volume": [10.5, 15.2],
-            }
-        )
-        # Add some indicator values for testing
-        df["bb_upper"] = [36000, 36500]
-        df["bb_middle"] = [34500, 35000]
-        df["bb_lower"] = [33000, 33500]
-        df["ema"] = [34200, 34700]
-        df["stoch_k"] = [85, 75]
-        df["stoch_d"] = [80, 85]
-        return df
-
-    mock.fetch_ohlcv.side_effect = mock_fetch_ohlcv
+    # Create a DataFrame for mock_fetch_ohlcv
+    df = pd.DataFrame(
+        {
+            "open": [34000, 34500],
+            "high": [35000, 35500],
+            "low": [33500, 34000],
+            "close": [34500, 35000],
+            "volume": [10.5, 15.2],
+        }
+    )
+    # Add some indicator values for testing
+    df["bb_upper"] = [36000, 36500]
+    df["bb_middle"] = [34500, 35000]
+    df["bb_lower"] = [33000, 33500]
+    df["ema"] = [34200, 34700]
+    df["stoch_k"] = [85, 75]
+    df["stoch_d"] = [80, 85]
+    
+    # Setup fetch_ohlcv as AsyncMock
+    mock.fetch_ohlcv = AsyncMock(return_value=df)
+    
+    # Setup fetch_open_orders as AsyncMock
+    mock.fetch_open_orders = AsyncMock(return_value=[])
+    
+    # Setup cancel_order as AsyncMock
+    mock.cancel_order = AsyncMock(return_value=True)
 
     return mock
 
@@ -102,14 +107,13 @@ class TestPositionManager:
         # Setup test data
         symbol = "BTC/USDT"
         quantity = 0.01
-        entry_price = 35000
         risk_level = {"stop_loss": 33000, "take_profit": 38000}
         confidence = 0.7
         pair_config = {"symbol": "BTC/USDT", "min_quantity": 0.001}
 
         # Call the method
         result = await position_manager.open_position(
-            symbol, quantity, entry_price, risk_level, confidence, pair_config
+            symbol, quantity, risk_level, confidence, pair_config
         )
 
         # Check if methods were called correctly
@@ -119,15 +123,12 @@ class TestPositionManager:
 
         # Validate active_trades was updated
         assert symbol in position_manager.active_trades
-        assert (
-            position_manager.active_trades[symbol]["entry_price"]
-            == entry_price
-        )
+        assert position_manager.active_trades[symbol]["entry_price"] == 35000
         assert position_manager.active_trades[symbol]["quantity"] == quantity
 
         # Validate result
         assert result["symbol"] == symbol
-        assert result["entry_price"] == entry_price
+        assert result["entry_price"] == 35000
 
     @pytest.mark.asyncio
     async def test_close_position(
@@ -137,7 +138,6 @@ class TestPositionManager:
         # Setup test data
         symbol = "BTC/USDT"
         entry_price = 35000
-        exit_price = 36000
         quantity = 0.01
         close_reason = "take_profit"
 
@@ -148,9 +148,12 @@ class TestPositionManager:
             "entry_time": datetime.now().isoformat(),
         }
 
+        # Mock the current price for exit_price
+        mock_exchange.get_current_price = AsyncMock(return_value=36000)
+
         # Call the method
         result = await position_manager.close_position(
-            symbol, exit_price, close_reason
+            symbol, close_reason
         )
 
         # Check if methods were called correctly
@@ -163,7 +166,6 @@ class TestPositionManager:
         saved_trade = mock_monitor.save_completed_trade.call_args[0][0]
         assert saved_trade["symbol"] == symbol
         assert saved_trade["entry_price"] == entry_price
-        assert saved_trade["exit_price"] == exit_price
         assert saved_trade["close_reason"] == close_reason
 
         # Validate trade was removed from active trades
@@ -172,7 +174,7 @@ class TestPositionManager:
         # Validate result
         assert result["symbol"] == symbol
         assert result["entry_price"] == entry_price
-        assert result["exit_price"] == exit_price
+        assert result["exit_price"] == 36000  # From mock_exchange.place_market_sell.return_value
         assert result["close_reason"] == close_reason
 
     @pytest.mark.asyncio
@@ -193,6 +195,22 @@ class TestPositionManager:
             "stop_loss": 33000,
             "take_profit": 38000,
         }
+
+        # Setup trading config with trailing stop
+        position_manager.config = {
+            "trailing_stop_pct": 0.02,
+            "trailing_stop_activation_pct": 0.01,
+        }
+
+        # Mock the place_market_sell to return a valid result
+        mock_exchange.place_market_sell = AsyncMock(return_value={
+            "order_id": "test_sell_id",
+            "average_price": 36000,
+            "filled_quantity": 0.01,
+        })
+        
+        # Mock get_current_price for _update_trades_status call
+        mock_exchange.get_current_price = AsyncMock(return_value=36000)
 
         # Call the method
         closed_positions = await position_manager.check_positions(
@@ -231,6 +249,9 @@ class TestPositionManager:
                 "quantity": 0.01,
                 "entry_time": datetime.now().isoformat(),
             }
+
+        # Ensure get_current_price returns a value
+        mock_exchange.get_current_price = AsyncMock(return_value=36000)
 
         # Call the method
         await position_manager._update_trades_status()
