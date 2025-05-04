@@ -13,19 +13,24 @@ logger = get_logger(__name__)
 class BollStochStrategy:
     def __init__(
         self,
-        boll_window: int = 20,
+        boll_length: int = 20,
         boll_std: float = 2.0,
-        ema_window: int = 20,
-        stoch_window: int = 14,
+        ema_length: int = 20,
+        stoch_length: int = 14,
         stoch_smooth_k: int = 3,
         stoch_smooth_d: int = 3,
+        stoch_oversold: int = 20,
+        stoch_overbought: int = 80,
     ):
-        self.boll_window = boll_window
+        # Map config names to internal variable names
+        self.boll_window = boll_length
         self.boll_std = boll_std
-        self.ema_window = ema_window
-        self.stoch_window = stoch_window
+        self.ema_window = ema_length
+        self.stoch_window = stoch_length
         self.stoch_smooth_k = stoch_smooth_k
         self.stoch_smooth_d = stoch_smooth_d
+        self.stoch_oversold = stoch_oversold
+        self.stoch_overbought = stoch_overbought
 
     @handle_strategy_errors(notify=True)
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -148,7 +153,7 @@ class BollStochStrategy:
             if (
                 current_price < bb_lower  # Price below lower BB
                 and current_price > ema  # Price above EMA
-                and stoch_k < 20  # Oversold
+                and stoch_k < self.stoch_oversold  # Oversold
                 and stoch_k > stoch_d
             ):  # Stoch crossover
                 tf_weight = self._get_timeframe_weight(tf)
@@ -165,7 +170,7 @@ class BollStochStrategy:
             elif (
                 current_price > bb_upper  # Price above upper BB
                 and current_price < ema  # Price below EMA
-                and stoch_k > 80  # Overbought
+                and stoch_k > self.stoch_overbought  # Overbought
                 and stoch_k < stoch_d
             ):  # Stoch crossunder
                 tf_weight = self._get_timeframe_weight(tf)
