@@ -26,9 +26,25 @@ fi
 SCRIPT_PATH="$BOT_DIR/bot.py"
 EXISTING_BOTS=$(pgrep -f "python3.*$SCRIPT_PATH")
 if [ ! -z "$EXISTING_BOTS" ]; then
-    echo "Warning: Found existing bot processes: $EXISTING_BOTS"
-    echo "Consider running stop.sh first"
-    exit 1
+    # Verify each process is actually running
+    ACTUAL_RUNNING_BOTS=""
+    for PID in $EXISTING_BOTS; do
+        if ps -p $PID > /dev/null; then
+            if [ -z "$ACTUAL_RUNNING_BOTS" ]; then
+                ACTUAL_RUNNING_BOTS="$PID"
+            else
+                ACTUAL_RUNNING_BOTS="$ACTUAL_RUNNING_BOTS $PID"
+            fi
+        fi
+    done
+    
+    if [ ! -z "$ACTUAL_RUNNING_BOTS" ]; then
+        echo "Warning: Found existing bot processes: $ACTUAL_RUNNING_BOTS"
+        echo "Consider running stop.sh first"
+        exit 1
+    else
+        echo "Detected stale process references, continuing..."
+    fi
 fi
 
 # Start the bot in the background

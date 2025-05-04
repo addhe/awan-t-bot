@@ -14,7 +14,22 @@ get_run_script_pid() {
 
 # Function to get all bot.py PIDs
 get_all_bot_pids() {
-    pgrep -f "python3.*$SCRIPT_PATH"
+    # Get PIDs from pgrep
+    local ALL_PIDS=$(pgrep -f "python3.*$SCRIPT_PATH")
+    local VERIFIED_PIDS=""
+    
+    # Verify each PID is actually running
+    for PID in $ALL_PIDS; do
+        if ps -p $PID > /dev/null; then
+            if [ -z "$VERIFIED_PIDS" ]; then
+                VERIFIED_PIDS="$PID"
+            else
+                VERIFIED_PIDS="$VERIFIED_PIDS $PID"
+            fi
+        fi
+    done
+    
+    echo "$VERIFIED_PIDS"
 }
 
 # Function to stop processes gracefully
