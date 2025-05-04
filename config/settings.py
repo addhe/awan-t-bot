@@ -48,11 +48,28 @@ TRADING_CONFIG = {
 
 # System configuration
 SYSTEM_CONFIG = {
+    # Connection settings
     "connection_timeout": 10,  # seconds
     "read_timeout": 30,  # seconds
     "retry_count": 3,
     "retry_delay": 1,  # seconds
+    "retry_wait": 5,  # seconds to wait after an error in main loop
+    
+    # Rate limiting
     "rate_limit_buffer": 0.8,  # 80% of rate limit
+    "max_requests_per_minute": 45,  # Maximum API requests per minute
+    "max_orders_per_second": 5,  # Maximum orders per second
+    
+    # Circuit breaker settings
+    "error_threshold": 5,  # Number of errors before circuit breaker trips
+    "circuit_timeout": 600,  # Seconds to keep circuit breaker open (10 minutes)
+    
+    # Backoff settings
+    "initial_backoff": 1,  # Initial backoff in seconds
+    "max_backoff": 60,  # Maximum backoff in seconds
+    "backoff_factor": 2,  # Multiplier for exponential backoff
+    
+    # Intervals
     "main_loop_interval_seconds": 60, # Interval for the main processing loop
     "status_update_interval_seconds": 3600, # How often to log/send status updates (1 hour)
     "health_check_interval_seconds": 300, # How often to check exchange/system health (5 minutes)
