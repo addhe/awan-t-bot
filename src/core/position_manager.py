@@ -1,14 +1,15 @@
 """
 Position and trade management
 """
-import logging
 from datetime import datetime
 from typing import Dict, Any, Tuple, List, Optional
 
 from src.utils.status_monitor import BotStatusMonitor
 from src.exchange.connector import ExchangeConnector
+from src.utils.error_handlers import handle_exchange_errors, handle_strategy_errors, retry_with_backoff
+from src.utils.structured_logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class PositionManager:
     """Manages trading positions, entry/exit, and trade tracking"""
@@ -31,6 +32,7 @@ class PositionManager:
         self.monitor = monitor
         self.active_trades = {}
         
+    @handle_exchange_errors(notify=True)
     async def open_position(
         self, 
         symbol: str, 
@@ -53,34 +55,48 @@ class PositionManager:
         Returns:
             New position information
         """
-        try:
-            # Place market buy order
-            order = await self.exchange.place_market_buy(symbol, quantity)
+        # Log position opening attempt
+        logger.info(
+            f"Opening new position for {symbol}", 
+            symbol=symbol,
+            quantity=quantity,
+            entry_price=entry_price,
+            stop_loss=risk_level.get('stop_loss'),
+            take_profit=risk_level.get('take_profit'),
+            confidence=confidence
+        )
+        
+        # Place market buy order
+        order = await self.exchange.place_market_buy(symbol, quantity)
+        
+        # Record trade
+        self.active_trades[symbol] = {
+            'entry_price': entry_price,
+            'quantity': quantity,
+            'entry_time': datetime.now().isoformat(),
+            'stop_loss': risk_level.get('stop_loss', 0),
+            'take_profit': risk_level.get('take_profit', 0),
+            'confidence': confidence
+        }
+        
+        # Update active trades in monitor
+        await self._update_trades_status()
+        
+        logger.info(
+            f"Position opened for {symbol}", 
+            symbol=symbol,
+            order_id=order.get('id'),
+            position_count=len(self.active_trades)
+        )
+        
+        return {
+            'symbol': symbol,
+            'entry_price': entry_price,
+            'quantity': quantity,
+            'risk_level': risk_level
+        }
             
-            # Record trade
-            self.active_trades[symbol] = {
-                'entry_price': entry_price,
-                'quantity': quantity,
-                'entry_time': datetime.now().isoformat(),
-                'stop_loss': risk_level.get('stop_loss', 0),
-                'take_profit': risk_level.get('take_profit', 0),
-                'confidence': confidence
-            }
-            
-            # Update active trades in monitor
-            await self._update_trades_status()
-            
-            return {
-                'symbol': symbol,
-                'entry_price': entry_price,
-                'quantity': quantity,
-                'risk_level': risk_level
-            }
-            
-        except Exception as e:
-            logger.error(f"Error opening position for {symbol}: {e}")
-            raise
-            
+    @handle_exchange_errors(notify=True)
     async def close_position(
         self, 
         symbol: str, 
@@ -97,49 +113,67 @@ class PositionManager:
         Returns:
             Closed position information
         """
-        try:
-            if symbol not in self.active_trades:
-                logger.warning(f"Cannot close position for {symbol}: not in active trades")
-                return {}
-                
-            trade = self.active_trades[symbol]
+        if symbol not in self.active_trades:
+            logger.warning(
+                f"Cannot close position for {symbol}: not in active trades", 
+                symbol=symbol, 
+                active_trades=list(self.active_trades.keys())
+            )
+            return {}
             
-            # Place market sell order
-            order = await self.exchange.place_market_sell(symbol, trade['quantity'])
+        trade = self.active_trades[symbol]
+        entry_price = trade['entry_price']
+        quantity = trade['quantity']
+        
+        # Calculate profit/loss
+        pnl = ((exit_price - entry_price) / entry_price) * 100
+        
+        logger.info(
+            f"Closing position for {symbol}", 
+            symbol=symbol,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            profit=f"{pnl:.2f}%",
+            close_reason=close_reason
+        )
+        
+        # Place market sell order
+        order = await self.exchange.place_market_sell(symbol, quantity)
+        
+        # Save completed trade
+        self.monitor.save_completed_trade({
+            'symbol': symbol,
+            'entry_price': entry_price,
+            'exit_price': exit_price,
+            'quantity': quantity,
+            'profit': pnl,
+            'entry_time': trade.get('entry_time', datetime.now().isoformat()),
+            'close_reason': close_reason
+        })
+        
+        # Remove from active trades
+        del self.active_trades[symbol]
+        
+        # Update active trades in monitor
+        await self._update_trades_status()
+        
+        logger.info(
+            f"Position closed for {symbol}", 
+            symbol=symbol,
+            order_id=order.get('id'),
+            profit=f"{pnl:.2f}%",
+            remaining_positions=len(self.active_trades)
+        )
+        
+        return {
+            'symbol': symbol,
+            'entry_price': entry_price,
+            'exit_price': exit_price,
+            'profit': pnl,
+            'close_reason': close_reason
+        }
             
-            # Calculate profit/loss
-            entry_price = trade['entry_price']
-            pnl = ((exit_price - entry_price) / entry_price) * 100
-            
-            # Save completed trade
-            self.monitor.save_completed_trade({
-                'symbol': symbol,
-                'entry_price': entry_price,
-                'exit_price': exit_price,
-                'quantity': trade['quantity'],
-                'profit': pnl,
-                'entry_time': trade['entry_time'],
-                'close_reason': close_reason
-            })
-            
-            # Remove from active trades
-            del self.active_trades[symbol]
-            
-            # Update active trades in monitor
-            await self._update_trades_status()
-            
-            return {
-                'symbol': symbol,
-                'entry_price': entry_price,
-                'exit_price': exit_price,
-                'profit': pnl,
-                'close_reason': close_reason
-            }
-            
-        except Exception as e:
-            logger.error(f"Error closing position for {symbol}: {e}")
-            raise
-            
+    @handle_strategy_errors(notify=True)
     async def check_positions(self, strategy) -> List[Dict[str, Any]]:
         """Check all open positions for exit conditions
         
@@ -150,12 +184,20 @@ class PositionManager:
             List of closed positions
         """
         closed_positions = []
+        position_count = len(self.active_trades)
         
-        try:
-            for symbol, trade in list(self.active_trades.items()):
+        if position_count == 0:
+            logger.debug("No active positions to check")
+            return []
+            
+        logger.info(f"Checking {position_count} active positions")
+        
+        for symbol, trade in list(self.active_trades.items()):
+            try:
                 # Get current market data
                 df = await self.exchange.fetch_ohlcv(symbol, timeframe='15m', limit=10)
                 if df.empty:
+                    logger.warning(f"Empty data for {symbol}, skipping position check", symbol=symbol)
                     continue
 
                 current_price = df['close'].iloc[-1]
@@ -173,30 +215,37 @@ class PositionManager:
                 stop_loss_triggered = trade.get('stop_loss') > 0 and current_price <= trade['stop_loss']
                 take_profit_triggered = trade.get('take_profit') > 0 and current_price >= trade['take_profit']
                 
+                logger.debug(
+                    f"Position check for {symbol}",
+                    symbol=symbol,
+                    current_price=current_price,
+                    entry_price=entry_price,
+                    pnl=f"{pnl:.2f}%",
+                    should_sell=should_sell,
+                    confidence=confidence,
+                    stop_loss_triggered=stop_loss_triggered,
+                    take_profit_triggered=take_profit_triggered
+                )
+                
                 if should_sell or stop_loss_triggered or take_profit_triggered:
                     close_reason = 'signal' if should_sell else 'stop_loss' if stop_loss_triggered else 'take_profit'
                     
                     # Close position
                     result = await self.close_position(symbol, current_price, close_reason)
-                    closed_positions.append(result)
+                    if result:
+                        closed_positions.append(result)
+            except Exception as e:
+                logger.error(f"Error checking position for {symbol}", symbol=symbol, error=str(e), exc_info=True)
                     
-                    logger.info(
-                        f"Closed position for {symbol} at {current_price} "
-                        f"with {pnl:.2f}% profit/loss. Reason: {close_reason}"
-                    )
-                    
-            return closed_positions
-                    
-        except Exception as e:
-            logger.error(f"Error checking positions: {e}")
-            return []
+        return closed_positions
             
+    @handle_exchange_errors(notify=False)
     async def _update_trades_status(self) -> None:
         """Update active trades status in monitor"""
-        try:
-            trades_info = []
-            
-            for symbol, trade in self.active_trades.items():
+        trades_info = []
+        
+        for symbol, trade in self.active_trades.items():
+            try:
                 current_price = await self.exchange.get_current_price(symbol)
                 entry_price = trade['entry_price']
                 pnl = ((current_price - entry_price) / entry_price) * 100
@@ -208,11 +257,12 @@ class PositionManager:
                     'quantity': trade['quantity'],
                     'pnl': pnl
                 })
+            except Exception as e:
+                logger.error(f"Error updating trade status for {symbol}", symbol=symbol, error=str(e))
                 
+        if trades_info:
             self.monitor.update_trades(trades_info)
-            
-        except Exception as e:
-            logger.error(f"Error updating trades status: {e}")
+            logger.debug(f"Updated status for {len(trades_info)} active trades")
             
     async def cancel_all_orders(self) -> None:
         """Cancel all open orders"""

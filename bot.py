@@ -397,6 +397,9 @@ class SpotTradingBot:
 
                 current_price = df['close'].iloc[-1]
 
+                # Calculate indicators
+                df = self.strategy.calculate_indicators(df)
+
                 # Check if we should sell
                 should_sell, confidence = self.strategy.should_sell(
                     df,
@@ -554,11 +557,8 @@ class SpotTradingBot:
             symbol = next(s for s, t in self.active_trades.items() if t == trade)
             current_price = self._get_current_price(symbol)
             entry_price = float(trade['entry_price'])
-
-            if current_price and entry_price:
-                return ((current_price - entry_price) / entry_price) * 100
-            return 0.0
-
+            return self.strategy.calculate_pnl(entry_price, current_price)
+            
         except Exception as e:
             logger.error(f"Error calculating PnL: {e}")
             return 0.0

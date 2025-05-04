@@ -1,14 +1,21 @@
 """
 Exchange connector for cryptocurrency trading
 """
-import logging
 import ccxt
 import pandas as pd
 from typing import Dict, Any, Optional
 
 from src.utils.rate_limiter import rate_limited_api
+from src.utils.error_handlers import (
+    handle_exchange_errors, 
+    retry_with_backoff, 
+    NetworkError, 
+    ExchangeError,
+    OrderError
+)
+from src.utils.structured_logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class ExchangeConnector:
     """Handles all exchange interactions with proper rate limiting and error handling"""
@@ -44,6 +51,8 @@ class ExchangeConnector:
             raise
             
     @rate_limited_api()
+    @handle_exchange_errors(notify=False)
+    @retry_with_backoff(max_retries=3)
     async def fetch_ohlcv(self, symbol: str, timeframe: str = '1h', limit: int = 100) -> pd.DataFrame:
         """Fetch OHLCV data from exchange with rate limiting
         
@@ -55,65 +64,54 @@ class ExchangeConnector:
         Returns:
             DataFrame with OHLCV data
         """
-        try:
-            # Configure timeouts
-            self.exchange.options['timeout'] = self.system_config['connection_timeout'] * 1000
-            self.exchange.options['recvWindow'] = self.system_config['read_timeout'] * 1000
+        # Configure timeouts
+        self.exchange.options['timeout'] = self.system_config['connection_timeout'] * 1000
+        self.exchange.options['recvWindow'] = self.system_config['read_timeout'] * 1000
 
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            if not ohlcv:
-                logger.warning(f"No OHLCV data returned for {symbol}")
-                return pd.DataFrame()
-
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-            return df
-
-        except ccxt.NetworkError as e:
-            logger.error(f"Network error fetching OHLCV data for {symbol}: {e}")
+        ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        if not ohlcv:
+            logger.warning(f"No OHLCV data returned for {symbol}", symbol=symbol, timeframe=timeframe)
             return pd.DataFrame()
 
-        except ccxt.ExchangeError as e:
-            logger.error(f"Exchange error fetching OHLCV data for {symbol}: {e}")
-            return pd.DataFrame()
-
-        except Exception as e:
-            logger.error(f"Error fetching OHLCV data for {symbol}: {e}")
-            return pd.DataFrame()
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        
+        logger.debug(
+            f"Fetched {len(df)} OHLCV candles for {symbol}", 
+            symbol=symbol, 
+            timeframe=timeframe,
+            candles=len(df)
+        )
+        
+        return df
             
     @rate_limited_api()
+    @handle_exchange_errors(notify=True)
+    @retry_with_backoff(max_retries=3)
     async def get_all_balances(self) -> Dict[str, float]:
         """Get available balances for all assets with rate limiting
         
         Returns:
             Dictionary of asset balances
         """
-        try:
-            balances = {}
-            account_info = self.exchange.fetch_balance()
-            
-            if 'free' in account_info:
-                # Filter out zero balances and format 
-                for asset, amount in account_info['free'].items():
-                    if amount > 0:
-                        balances[asset] = amount
-            
-            return balances
-
-        except ccxt.NetworkError as e:
-            logger.error(f"Network error fetching balances: {e}")
-            return {}
-
-        except ccxt.ExchangeError as e:
-            logger.error(f"Exchange error fetching balances: {e}")
-            return {}
-
-        except Exception as e:
-            logger.error(f"Error fetching balances: {e}")
-            return {}
+        account_info = self.exchange.fetch_balance()
+        balances = {}
+        
+        if 'free' in account_info:
+            # Filter out zero balances and format 
+            for asset, amount in account_info['free'].items():
+                if amount > 0:
+                    balances[asset] = amount
+        
+        logger.info(
+            f"Fetched balances for {len(balances)} assets", 
+            assets=list(balances.keys())
+        )
+        return balances
             
     @rate_limited_api()
+    @handle_exchange_errors(notify=False)
     async def get_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get current ticker information for a symbol
         
@@ -123,12 +121,11 @@ class ExchangeConnector:
         Returns:
             Ticker information or None if error
         """
-        try:
-            return self.exchange.fetch_ticker(symbol)
-        except Exception as e:
-            logger.error(f"Error fetching ticker for {symbol}: {e}")
-            return None
+        ticker = self.exchange.fetch_ticker(symbol)
+        logger.debug(f"Fetched ticker for {symbol}", symbol=symbol, last_price=ticker.get('last'))
+        return ticker
             
+    @handle_exchange_errors(notify=False)
     async def get_current_price(self, symbol: str) -> float:
         """Get current price for a symbol
         
@@ -138,14 +135,12 @@ class ExchangeConnector:
         Returns:
             Current price or 0 if error
         """
-        try:
-            ticker = await self.get_ticker(symbol)
-            return float(ticker['last']) if ticker and 'last' in ticker else 0
-        except Exception as e:
-            logger.error(f"Error getting current price for {symbol}: {e}")
-            return 0
+        ticker = await self.get_ticker(symbol)
+        price = float(ticker['last']) if ticker and 'last' in ticker else 0
+        return price
             
     @rate_limited_api()
+    @handle_exchange_errors(notify=True)
     async def place_market_buy(self, symbol: str, quantity: float) -> Dict[str, Any]:
         """Place a market buy order
         
@@ -156,15 +151,17 @@ class ExchangeConnector:
         Returns:
             Order information
         """
-        try:
-            order = self.exchange.create_market_buy_order(symbol, quantity)
-            logger.info(f"Placed market buy order for {quantity} {symbol}")
-            return order
-        except Exception as e:
-            logger.error(f"Error placing market buy order for {symbol}: {e}")
-            raise
+        order = self.exchange.create_market_buy_order(symbol, quantity)
+        logger.info(
+            f"Placed market buy order for {quantity} {symbol}", 
+            symbol=symbol, 
+            quantity=quantity,
+            order_id=order.get('id')
+        )
+        return order
             
     @rate_limited_api()
+    @handle_exchange_errors(notify=True)
     async def place_market_sell(self, symbol: str, quantity: float) -> Dict[str, Any]:
         """Place a market sell order
         
@@ -175,13 +172,14 @@ class ExchangeConnector:
         Returns:
             Order information
         """
-        try:
-            order = self.exchange.create_market_sell_order(symbol, quantity)
-            logger.info(f"Placed market sell order for {quantity} {symbol}")
-            return order
-        except Exception as e:
-            logger.error(f"Error placing market sell order for {symbol}: {e}")
-            raise
+        order = self.exchange.create_market_sell_order(symbol, quantity)
+        logger.info(
+            f"Placed market sell order for {quantity} {symbol}", 
+            symbol=symbol, 
+            quantity=quantity,
+            order_id=order.get('id')
+        )
+        return order
             
     @rate_limited_api()
     async def cancel_order(self, order_id: str, symbol: str) -> Dict[str, Any]:
