@@ -1,3 +1,5 @@
+import os
+
 """
 Bot configuration settings
 """
@@ -5,105 +7,87 @@ Bot configuration settings
 # Trading pairs configuration
 TRADING_PAIRS = [
     {
-        'symbol': 'BTCUSDT',
-        'min_quantity': 0.00001,
-        'price_precision': 2,
-        'quantity_precision': 5
+        "symbol": "BTCUSDT",
+        "min_quantity": 0.00001,
+        "price_precision": 2,
+        "quantity_precision": 5,
+        "max_position_qty": 0.001,
+        "timeframes": ["1h", "4h"],
     },
     {
-        'symbol': 'ETHUSDT',
-        'min_quantity': 0.0001,
-        'price_precision': 2,
-        'quantity_precision': 4
+        "symbol": "ETHUSDT",
+        "min_quantity": 0.001,
+        "price_precision": 2,
+        "quantity_precision": 5,
+        "max_position_qty": 0.01,
+        "timeframes": ["1h", "4h"],
     },
-    {
-        'symbol': 'SOLUSDT',
-        'min_quantity': 0.01,
-        'price_precision': 3,
-        'quantity_precision': 2
-    }
 ]
 
 # Strategy configuration
 STRATEGY_CONFIG = {
-    'boll_window': 20,
-    'boll_std': 2.0,
-    'ema_window': 20,
-    'stoch_window': 14,
-    'stoch_smooth_k': 3,
-    'stoch_smooth_d': 3,
-    'min_profit': 0.015,  # 1.5% minimum profit
-    'stop_loss': 0.01,    # 1% stop loss
+    "boll_length": 20,
+    "boll_std": 2,
+    "ema_length": 50,
+    "stoch_length": 14,
+    "stoch_smooth_k": 3,
+    "stoch_smooth_d": 3,
+    "stoch_oversold": 20,
+    "stoch_overbought": 80,
 }
 
 # Trading configuration
 TRADING_CONFIG = {
-    'max_open_trades': 3,
-    'max_trade_retry': 3,
-    'order_timeout': 60,  # seconds
-    'cancel_after': 300,  # cancel order if not filled after 5 minutes
-    'allocation_per_trade': 0.2,  # 20% dari balance untuk setiap trade
-    'min_allocation_usdt': 10,  # Minimum 10 USDT per trade
-    'max_allocation_usdt': 100,  # Maximum 100 USDT per trade
+    "max_open_trades": 3,
+    "position_size_pct": 0.05,  # 5% of balance per trade
+    "stop_loss_pct": 0.02,  # 2% stop loss
+    "take_profit_pct": 0.03,  # 3% take profit
+    "trailing_stop_pct": 0.01,  # 1% trailing stop
+    "trailing_stop_activation_pct": 0.01,  # Activate trailing stop after 1% profit
 }
-
-# Timeframes to analyze
-TIMEFRAMES = ['15m', '1h', '4h', '1d']
 
 # System configuration
 SYSTEM_CONFIG = {
-    'check_interval': 60,  # seconds between checks
-    'health_check_interval': 300,  # seconds between health checks
-    'max_api_retries': 3,
-    'retry_wait': 10,  # seconds to wait between retries
-
-    # Rate limiting
-    'max_requests_per_minute': 45,  # Binance limit is 50/minute for spot
-    'max_orders_per_second': 5,    # Binance limit is 10/second
-
-    # Network timeouts
-    'connection_timeout': 10,  # seconds
-    'read_timeout': 30,       # seconds
-
-    # Backoff settings
-    'initial_backoff': 1,     # seconds
-    'max_backoff': 300,       # 5 minutes
-    'backoff_factor': 2,      # exponential backoff
-
-    # Circuit breaker
-    'error_threshold': 5,     # errors before circuit breaks
-    'circuit_timeout': 600,   # 10 minutes timeout
+    "connection_timeout": 10,  # seconds
+    "read_timeout": 30,  # seconds
+    "retry_count": 3,
+    "retry_delay": 1,  # seconds
+    "rate_limit_buffer": 0.8,  # 80% of rate limit
 }
 
 # Logging configuration
-LOG_CONFIG = {
-    'log_level': 'INFO',
-    'log_format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    'log_file': 'logs/trading_bot.log',
-    'max_file_size': 5 * 1024 * 1024,  # 5 MB
-    'backup_count': 3
+LOGGING_CONFIG = {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "date_format": "%Y-%m-%d %H:%M:%S",
+    "file": "logs/trading_bot.log",
+    "max_bytes": 10 * 1024 * 1024,  # 10 MB
+    "backup_count": 3,
 }
-
-import os
 
 # Telegram configuration
 TELEGRAM_CONFIG = {
-    'enabled': True,
-    'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
-    'chat_id': os.getenv('TELEGRAM_CHAT_ID', ''),
-    'notification_types': [
-        'trade_entry',
-        'trade_exit',
-        'error',
-        'warning',
-        'system'
-    ]
+    "enabled": True,
+    "bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
+    "chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
+    "notification_level": "INFO",  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 }
 
 # Exchange configuration
 EXCHANGE_CONFIG = {
-    'name': 'binance',
-    'api_key': os.getenv('BINANCE_API_KEY', ''),
-    'api_secret': os.getenv('BINANCE_API_SECRET', ''),
-    'testnet': os.getenv('USE_TESTNET', 'False').lower() == 'true'
+    "name": "binance",
+    "api_key": os.getenv("BINANCE_API_KEY", ""),
+    "api_secret": os.getenv("BINANCE_API_SECRET", ""),
+    "testnet": os.getenv("USE_TESTNET", "False").lower() == "true",
+}
+
+# Default configuration
+CONFIG = {
+    "trading_pairs": TRADING_PAIRS,
+    "strategy": STRATEGY_CONFIG,
+    "trading": TRADING_CONFIG,
+    "system": SYSTEM_CONFIG,
+    "logging": LOGGING_CONFIG,
+    "telegram": TELEGRAM_CONFIG,
+    "exchange": EXCHANGE_CONFIG,
 }

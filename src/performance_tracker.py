@@ -1,11 +1,24 @@
 import logging
 from typing import Dict, Any, List
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
-import numpy as np
+
 
 class PerformanceMetrics:
     def __init__(self):
+        """
+        Initialize PerformanceMetrics instance.
+
+        Attributes:
+            trades (List[Dict[str, Any]]): List of trade information
+            daily_pnl (Dict[str, float]): Daily profit/loss amounts
+            consecutive_losses (int): Number of consecutive losses
+            total_trades (int): Total number of trades
+            winning_trades (int): Number of winning trades
+            start_balance (float): Initial balance
+            current_balance (float): Current balance
+            max_balance (float): Maximum balance
+        """
         self.trades: List[Dict[str, Any]] = []
         self.daily_pnl: Dict[str, float] = {}
         self.consecutive_losses = 0
@@ -25,12 +38,12 @@ class PerformanceMetrics:
         """
         try:
             current_time = datetime.now()
-            date_key = current_time.strftime('%Y-%m-%d')
+            date_key = current_time.strftime("%Y-%m-%d")
 
             trade_info = {
-                'timestamp': current_time,
-                'pnl': pnl,
-                'closed': closed
+                "timestamp": current_time,
+                "pnl": pnl,
+                "closed": closed,
             }
 
             self.trades.append(trade_info)
@@ -59,10 +72,14 @@ class PerformanceMetrics:
     def daily_loss_percentage(self) -> float:
         """Calculate today's loss percentage."""
         try:
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = datetime.now().strftime("%Y-%m-%d")
             if today in self.daily_pnl:
                 daily_loss = self.daily_pnl[today]
-                return abs(daily_loss) / self.start_balance * 100 if daily_loss < 0 else 0
+                return (
+                    abs(daily_loss) / self.start_balance * 100
+                    if daily_loss < 0
+                    else 0
+                )
             return 0
 
         except Exception as e:
@@ -79,7 +96,7 @@ class PerformanceMetrics:
             current_balance = self.start_balance
 
             for trade in self.trades:
-                current_balance += trade['pnl']
+                current_balance += trade["pnl"]
                 balances.append(current_balance)
 
             cummax = pd.Series(balances).expanding().max()
@@ -125,6 +142,7 @@ class PerformanceMetrics:
             logging.error(f"Error checking if can trade: {e}")
             return False
 
+
 def analyze_trading_performance(metrics: PerformanceMetrics) -> Dict[str, Any]:
     """
     Analyze trading performance metrics.
@@ -137,16 +155,17 @@ def analyze_trading_performance(metrics: PerformanceMetrics) -> Dict[str, Any]:
     """
     try:
         return {
-            'total_trades': metrics.total_trades,
-            'win_rate': metrics.win_rate(),
-            'max_drawdown': metrics.max_drawdown(),
-            'daily_loss_pct': metrics.daily_loss_percentage(),
-            'consecutive_losses': metrics.consecutive_losses
+            "total_trades": metrics.total_trades,
+            "win_rate": metrics.win_rate(),
+            "max_drawdown": metrics.max_drawdown(),
+            "daily_loss_pct": metrics.daily_loss_percentage(),
+            "consecutive_losses": metrics.consecutive_losses,
         }
 
     except Exception as e:
         logging.error(f"Error analyzing performance: {e}")
         return {}
+
 
 def check_risk_limits(metrics: PerformanceMetrics) -> bool:
     """
