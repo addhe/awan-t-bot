@@ -54,6 +54,7 @@ SYSTEM_CONFIG = {
     "retry_count": 3,
     "retry_delay": 1,  # seconds
     "retry_wait": 5,  # seconds to wait after an error in main loop
+    "max_api_retries": 3,  # Maximum number of API call retries
     
     # Rate limiting
     "rate_limit_buffer": 0.8,  # 80% of rate limit
