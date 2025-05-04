@@ -101,29 +101,18 @@ TRADING_CONFIG = {
 }
 
 # Balance-based Position Sizing
-< 100 USDT:
-- 30% max per trade
-- 1 position max
-- Target: 3.0%
-- Stop: 2.0%
 
-100-500 USDT:
-- 25% max per trade
-- 2 positions max
-- Target: 2.5%
-- Stop: 1.8%
+> **Catatan:** Implementasi saat ini menggunakan konfigurasi statis dari `config/settings.py`:
+> - Jumlah maksimum posisi terbuka SELALU **3** (parameter `max_open_trades`)
+> - Alokasi per trade: 20% dari saldo (minimal 10 USDT per trade, maksimal 100 USDT per trade)
+> - Tidak ada penyesuaian otomatis jumlah posisi berdasarkan saldo.
 
-500-1000 USDT:
-- 20% max per trade
-- 2 positions max
-- Target: 2.0%
-- Stop: 1.5%
+Contoh:
+- Modal 100 USDT → maksimal 3 posisi terbuka, masing-masing sekitar 20 USDT.
+- Modal 50 USDT → maksimal 3 posisi terbuka, masing-masing sekitar 10 USDT (jika masih memenuhi minimum exchange).
+- Modal 1000 USDT → maksimal 3 posisi terbuka, masing-masing sekitar 100 USDT (karena dibatasi `max_allocation_usdt`).
 
-1000+ USDT:
-- 15% max per trade
-- 3 positions max
-- Target: 1.8%
-- Stop: 1.2%
+Jika ingin membatasi jumlah posisi berdasarkan saldo, silakan ubah manual parameter `max_open_trades` di file konfigurasi.
 ```
 
 ### Network & Safety (`config/settings.py`)
