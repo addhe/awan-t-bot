@@ -66,7 +66,7 @@ class ExchangeConnector:
             )
             raise
             
-    def _safe_async_call(self, method_name, *args, **kwargs):
+    async def _safe_async_call(self, method_name, *args, **kwargs):
         """Safely call a method that might be async or sync
         
         Args:
@@ -78,17 +78,17 @@ class ExchangeConnector:
             Result of the method call
         """
         method = getattr(self.exchange, method_name)
-        try:
-            # Try to call as async
+        
+        # Periksa apakah metode adalah coroutine function
+        import inspect
+        if inspect.iscoroutinefunction(method):
+            # Jika async, panggil dengan await
+            logger.debug(f"{method_name} adalah coroutine function, memanggil dengan await")
+            return await method(*args, **kwargs)
+        else:
+            # Jika bukan async, panggil sebagai fungsi normal
+            logger.debug(f"{method_name} bukan coroutine function, memanggil sebagai fungsi normal")
             return method(*args, **kwargs)
-        except TypeError as e:
-            if "can't be used in 'await' expression" in str(e):
-                # If not async, call as sync
-                logger.debug(f"{method_name} is not a coroutine, calling as normal function")
-                return method(*args, **kwargs)
-            else:
-                # If other error, re-raise
-                raise
 
     @rate_limited_api()
     @handle_exchange_errors(notify=False)
@@ -107,7 +107,17 @@ class ExchangeConnector:
             DataFrame with OHLCV data or empty DataFrame on failure.
         """
         # Timeouts are now set during initialization
-        ohlcv = await self._safe_async_call('fetch_ohlcv', symbol, timeframe, limit=limit)
+        try:
+            ohlcv = await self._safe_async_call('fetch_ohlcv', symbol, timeframe, limit=limit)
+        except Exception as e:
+            logger.error(f"Error in fetch_ohlcv: {e}")
+            # Fallback to direct call if _safe_async_call fails
+            try:
+                logger.debug(f"Fallback to direct call for fetch_ohlcv")
+                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                return pd.DataFrame()  # Return empty dataframe on failure
         # handle_exchange_errors returns None on failure after retries
         if ohlcv is None:
             logger.warning(
@@ -145,7 +155,17 @@ class ExchangeConnector:
         Returns:
             Ticker information or None if error after retries.
         """
-        ticker = await self._safe_async_call('fetch_ticker', symbol)
+        try:
+            ticker = await self._safe_async_call('fetch_ticker', symbol)
+        except Exception as e:
+            logger.error(f"Error in get_ticker: {e}")
+            # Fallback to direct call
+            try:
+                logger.debug(f"Fallback to direct call for fetch_ticker")
+                ticker = self.exchange.fetch_ticker(symbol)
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                return None
         if ticker:
             logger.debug(
                 f"Fetched ticker for {symbol}",
@@ -190,7 +210,19 @@ class ExchangeConnector:
         Returns:
             Dictionary of asset balances
         """
-        account_info = self.exchange.fetch_balance()
+        try:
+            # Coba gunakan _safe_async_call
+            account_info = await self._safe_async_call('fetch_balance')
+        except Exception as e:
+            logger.error(f"Error in get_all_balances with _safe_async_call: {e}")
+            # Fallback ke panggilan langsung
+            try:
+                logger.debug(f"Fallback to direct call for fetch_balance")
+                account_info = self.exchange.fetch_balance()
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                return {}  # Return empty dict on failure
+        
         balances = {}
 
         if "free" in account_info:
@@ -226,7 +258,12 @@ class ExchangeConnector:
             # Ensure quantity precision is respected if needed (depends on exchange)
             # quantity = self.exchange.amount_to_precision(symbol, quantity)
             
-            order = await self._safe_async_call('create_market_buy_order', symbol, quantity)
+            try:
+                order = await self._safe_async_call('create_market_buy_order', symbol, quantity)
+            except Exception as e:
+                logger.error(f"Error in create_market_buy_order: {e}")
+                # Fallback to direct call
+                order = self.exchange.create_market_buy_order(symbol, quantity)
             
             order_id = order.get("id")
             avg_price = order.get("average")
@@ -286,7 +323,12 @@ class ExchangeConnector:
             # Ensure quantity precision is respected
             # quantity = self.exchange.amount_to_precision(symbol, quantity)
 
-            order = await self._safe_async_call('create_market_sell_order', symbol, quantity)
+            try:
+                order = await self._safe_async_call('create_market_sell_order', symbol, quantity)
+            except Exception as e:
+                logger.error(f"Error in create_market_sell_order: {e}")
+                # Fallback to direct call
+                order = self.exchange.create_market_sell_order(symbol, quantity)
             
             order_id = order.get("id")
             avg_price = order.get("average")
@@ -335,7 +377,17 @@ class ExchangeConnector:
             Cancellation information dict or None if cancellation fails after retries.
         """
         # Decorators now handle errors and retries
-        result = await self._safe_async_call('cancel_order', order_id, symbol)
+        try:
+            result = await self._safe_async_call('cancel_order', order_id, symbol)
+        except Exception as e:
+            logger.error(f"Error in cancel_order: {e}")
+            # Fallback to direct call
+            try:
+                logger.debug(f"Fallback to direct call for cancel_order")
+                result = self.exchange.cancel_order(order_id, symbol)
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                return None
         if result:
              logger.info(f"Successfully cancelled order {order_id} for {symbol}", 
                          order_id=order_id, symbol=symbol)
@@ -355,7 +407,17 @@ class ExchangeConnector:
             List of open orders or None if fetch fails after retries.
         """
         # Decorators now handle errors and retries
-        orders = await self._safe_async_call('fetch_open_orders', symbol)
+        try:
+            orders = await self._safe_async_call('fetch_open_orders', symbol)
+        except Exception as e:
+            logger.error(f"Error in fetch_open_orders: {e}")
+            # Fallback to direct call
+            try:
+                logger.debug(f"Fallback to direct call for fetch_open_orders")
+                orders = self.exchange.fetch_open_orders(symbol)
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                return None
         if orders is not None: # Check if fetch was successful (not None)
              logger.debug(f"Fetched {len(orders)} open orders for {symbol}", 
                           symbol=symbol, count=len(orders))
