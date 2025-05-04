@@ -154,17 +154,36 @@ class TradingBot:
             return False
 
         # Analyze signals
-        signal, confidence, risk_levels = self.strategy.analyze_signals(
-            timeframe_data
-        )
-
-        logger.debug(
-            f"Signal analysis for {symbol}",
-            symbol=symbol,
-            signal=signal,
-            confidence=confidence,
-            risk_levels=risk_levels,
-        )
+        try:
+            signal, confidence, risk_levels = self.strategy.analyze_signals(
+                timeframe_data
+            )
+            
+            # Validate strategy return values
+            if signal is None or confidence is None or risk_levels is None:
+                logger.warning(
+                    f"Invalid strategy return values for {symbol}",
+                    symbol=symbol,
+                    signal=signal,
+                    confidence=confidence,
+                )
+                return False
+                
+            logger.debug(
+                f"Signal analysis for {symbol}",
+                symbol=symbol,
+                signal=signal,
+                confidence=confidence,
+                risk_levels=risk_levels,
+            )
+        except Exception as e:
+            logger.error(
+                f"Error analyzing signals for {symbol}: {str(e)}",
+                symbol=symbol,
+                error=str(e),
+                exc_info=True
+            )
+            return False
 
         # If we have a buy signal, execute trade
         if signal == "buy" and confidence > 0.5:
@@ -300,7 +319,7 @@ class TradingBot:
             "total_profit": total_profit,
         }
 
-    def _graceful_shutdown(self) -> None:
+    async def _graceful_shutdown(self) -> None:
         """Handle graceful shutdown of the bot"""
         try:
             logger.info(
@@ -309,10 +328,10 @@ class TradingBot:
             )
 
             # Cancel pending orders
-            asyncio.run(self.position_manager.cancel_all_orders())
+            await self.position_manager.cancel_all_orders()
 
             # Save active trades
-            self.position_manager.graceful_shutdown()
+            await self.position_manager.graceful_shutdown()
 
             # Calculate total uptime
             uptime = datetime.now() - self.start_time
@@ -344,7 +363,12 @@ class TradingBot:
             logger.info(
                 f"Received signal {signum}, shutting down...", signal=signum
             )
-            self._graceful_shutdown()
+            # Create a new event loop for the shutdown process
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            # Run the shutdown process
+            loop.run_until_complete(self._graceful_shutdown())
+            loop.close()
             exit(0)
 
         signal.signal(signal.SIGTERM, signal_handler)

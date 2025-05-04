@@ -157,8 +157,6 @@ def handle_exchange_errors(notify: bool = True):
                 raise
 
         # Return appropriate wrapper based on whether the decorated function is async
-# (asyncio.iscoroutinefunction(func))
-# (asyncio.iscoroutinefunction(func))
 
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
@@ -207,8 +205,6 @@ def handle_strategy_errors(notify: bool = False):
                 raise StrategyError(error_msg)
 
         # Return appropriate wrapper based on whether the decorated function is async
-# (asyncio.iscoroutinefunction(func))
-# (asyncio.iscoroutinefunction(func))
 
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
@@ -281,8 +277,6 @@ def retry_with_backoff(
                     backoff *= backoff_factor
 
         # Return appropriate wrapper based on whether the decorated function is async
-# (asyncio.iscoroutinefunction(func))
-# (asyncio.iscoroutinefunction(func))
 
         if asyncio.iscoroutinefunction(func):
             return async_wrapper

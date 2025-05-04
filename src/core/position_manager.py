@@ -359,32 +359,26 @@ class PositionManager:
             logger.error(f"Error getting position summary: {e}")
             return {"total_positions": 0, "total_value": 0, "average_pnl": 0}
 
-    def graceful_shutdown(self) -> None:
+    async def graceful_shutdown(self) -> None:
         """Save active trades to completed trades during shutdown"""
         try:
             if not self.active_trades:
                 return
 
             logger.warning(
-                (
-                    (
-                        (
-                            f"Saving {len(self.active_trades)} active trades "  # noqa: E501
-                            f"during shutdown"
-                        )
-                    )
-
-                )
-
-
-
+                f"Saving {len(self.active_trades)} active trades during shutdown"
             )
 
             for symbol, trade in self.active_trades.items():
                 try:
-                    current_price = self.exchange.get_current_price(symbol)
+                    current_price = await self.exchange.get_current_price(symbol)
                     entry_price = trade["entry_price"]
-                    pnl = ((current_price - entry_price) / entry_price) * 100
+                    
+                    # Avoid division by zero
+                    if entry_price == 0:
+                        pnl = 0
+                    else:
+                        pnl = ((current_price - entry_price) / entry_price) * 100
 
                     # Save to completed trades
                     self.monitor.save_completed_trade(

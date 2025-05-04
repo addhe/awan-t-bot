@@ -10,8 +10,8 @@ Panduan ini mengatur standar penulisan kode Python di codebase trading bot ini.
   - Gunakan 4 spasi untuk indentasi.
   - Tidak menggunakan tab.
 
-## 2. Maksimal 79 Karakter per Baris
-- Setiap baris kode tidak boleh lebih dari 79 karakter.
+## 2. Maksimal 100 Karakter per Baris
+- Setiap baris kode tidak boleh lebih dari 100 karakter.
 - Untuk docstring dan komentar, maksimal 72 karakter per baris.
 - Gunakan line continuation (`\`) atau pemisahan logika jika perlu.
 
@@ -41,7 +41,7 @@ Panduan ini mengatur standar penulisan kode Python di codebase trading bot ini.
 
 ## 8. Linter & Formatter
 - Gunakan `flake8` untuk linting dan pengecekan panjang baris.
-- Gunakan `black` dengan opsi `--line-length 79` untuk auto-format.
+- Gunakan `black` dengan opsi `--line-length 100` untuk auto-format.
 - Pastikan kode bebas error lint sebelum PR di-merge.
 
 ## 9. Contoh
