@@ -1,12 +1,13 @@
 # Awan Trading Bot
 
-## Latest Update (2025-05-01)
+## Latest Update (2025-05-04)
 
-Major refactoring and strategy implementation:
-- Implemented multi-timeframe Bollinger Bands + Stochastic RSI strategy
-- Added support for multiple trading pairs (BTC, ETH, SOL)
-- Enhanced risk management system
-- Improved codebase organization
+Major refactoring and code improvements:
+- Restructured codebase into modular components
+- Enhanced error handling with custom decorators
+- Implemented structured logging for better debugging
+- Added comprehensive unit tests
+- Improved code maintainability and readability
 
 ## Strategy Overview
 
@@ -51,6 +52,26 @@ The bot implements a sophisticated multi-timeframe analysis strategy using:
 - Performance tracking
 - System health monitoring
 - Error recovery system
+
+## Project Structure
+```
+src/
+  ├── exchange/
+  │    ├── connector.py      # Exchange connection, API calls
+  │
+  ├── core/
+  │    ├── trading_bot.py    # Core bot logic
+  │    └── position_manager.py # Position tracking, risk management
+  │
+  ├── strategies/
+  │    └── boll_stoch_strategy.py # Bollinger Bands + Stochastic RSI strategy
+  │
+  └── utils/
+       ├── error_handlers.py   # Error handling decorators
+       ├── status_monitor.py   # Bot status monitoring
+       ├── structured_logger.py # Enhanced logging
+       └── telegram_utils.py   # Telegram notifications
+```
 
 ## Installation
 
@@ -127,6 +148,18 @@ SYSTEM_CONFIG = {
 
 # Stop bot gracefully
 ./stop.sh
+```
+
+### Running Tests
+```bash
+# Run all unit tests
+python -m pytest tests/unit
+
+# Run specific test file
+python -m pytest tests/unit/test_exchange_connector.py
+
+# Run with coverage report
+python -m pytest tests/unit --cov=src
 ```
 
 ### Monitoring
