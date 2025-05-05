@@ -41,6 +41,16 @@ class BollStochStrategy:
             )
             return df
 
+        # Check if we have enough data for calculations
+        min_required_candles = max(self.boll_window, self.ema_window, self.stoch_window) + 10
+        if len(df) < min_required_candles:
+            logger.warning(
+                f"Not enough data for reliable indicators. Have {len(df)} candles, need at least {min_required_candles}",
+                candles=len(df),
+                required=min_required_candles
+            )
+            # We'll still try to calculate, but results may be unreliable
+
         logger.debug(
             f"Calculating indicators on {len(df)} candles",
             candles=len(df),
@@ -48,19 +58,27 @@ class BollStochStrategy:
             std=self.boll_std,
         )
 
+        # Make a copy to avoid SettingWithCopyWarning
+        df = df.copy()
+
+        # Ensure no NaN in price data
+        if df['close'].isna().any():
+            logger.warning("NaN values found in close prices, forward filling")
+            df['close'] = df['close'].ffill().bfill()  # Forward then backward fill
+
         # Bollinger Bands
         bb = BollingerBands(
             close=df["close"],
             window=self.boll_window,
             window_dev=self.boll_std,
         )
-        df["bb_upper"] = bb.bollinger_hband().fillna(method="ffill")
-        df["bb_middle"] = bb.bollinger_mavg().fillna(method="ffill")
-        df["bb_lower"] = bb.bollinger_lband().fillna(method="ffill")
+        df["bb_upper"] = bb.bollinger_hband().ffill()
+        df["bb_middle"] = bb.bollinger_mavg().ffill()
+        df["bb_lower"] = bb.bollinger_lband().ffill()
 
         # EMA
         ema = EMAIndicator(close=df["close"], window=self.ema_window)
-        df["ema"] = ema.ema_indicator().fillna(method="ffill")
+        df["ema"] = ema.ema_indicator().ffill()
 
         # Stochastic RSI
         stoch = StochRSIIndicator(
@@ -69,32 +87,45 @@ class BollStochStrategy:
             smooth1=self.stoch_smooth_k,
             smooth2=self.stoch_smooth_d,
         )
-        df["stoch_k"] = stoch.stochrsi_k().fillna(method="ffill")
-        df["stoch_d"] = stoch.stochrsi_d().fillna(method="ffill")
+        df["stoch_k"] = stoch.stochrsi_k().ffill()
+        df["stoch_d"] = stoch.stochrsi_d().ffill()
 
         # Handle any remaining NaN values
-        nan_columns = [
-            col
-            for col in [
-                "bb_upper",
-                "bb_middle",
-                "bb_lower",
-                "ema",
-                "stoch_k",
-                "stoch_d",
-            ]
-            if df[col].isna().any()
+        indicator_columns = [
+            "bb_upper", "bb_middle", "bb_lower", "ema", "stoch_k", "stoch_d"
         ]
 
-        if nan_columns:
+        # First check how many NaN values we have
+        nan_counts = {col: df[col].isna().sum() for col in indicator_columns}
+        total_nan = sum(nan_counts.values())
+
+        if total_nan > 0:
             logger.warning(
-                "NaN values found in indicators",
-                columns=nan_columns,
+                f"Total {total_nan} NaN values found in indicators",
+                nan_counts=nan_counts,
                 row_count=len(df),
             )
 
-            for col in nan_columns:
-                df[col] = df[col].fillna(df["close"])
+            # Fill NaN values with appropriate defaults
+            for col in indicator_columns:
+                if df[col].isna().any():
+                    if col in ["bb_upper", "bb_middle", "bb_lower", "ema"]:
+                        # For price-based indicators, use close price
+                        df[col] = df[col].fillna(df["close"])
+                    elif col in ["stoch_k", "stoch_d"]:
+                        # For oscillators, use middle value (50)
+                        df[col] = df[col].fillna(50)
+
+        # Verify no NaN values remain
+        remaining_nan = {col: df[col].isna().sum() for col in indicator_columns}
+        if sum(remaining_nan.values()) > 0:
+            logger.error(
+                "Failed to remove all NaN values from indicators",
+                remaining_nan=remaining_nan
+            )
+            # Last resort: drop NaN rows, but this is not ideal
+            df = df.dropna(subset=indicator_columns)
+            logger.warning(f"Dropped rows with NaN values, {len(df)} rows remaining")
 
         return df
 
@@ -110,12 +141,19 @@ class BollStochStrategy:
         confidence = 0.0
         available_timeframes = list(timeframe_data.keys())
 
+        if not available_timeframes:
+            logger.warning("No timeframe data available for signal analysis")
+            return "neutral", 0.0, {"stop_loss": 0.0, "take_profit": 0.0}
+
         logger.debug(
             f"Analyzing signals across {len(available_timeframes)} available timeframes",
             timeframes=available_timeframes,
         )
 
-        for tf in available_timeframes: 
+        # Track conditions for each timeframe for better debugging
+        timeframe_conditions = {}
+
+        for tf in available_timeframes:
             if tf not in timeframe_data:
                 continue
 
@@ -132,59 +170,118 @@ class BollStochStrategy:
             current_price = df["close"].iloc[-1]
             bb_upper = df["bb_upper"].iloc[-1]
             bb_lower = df["bb_lower"].iloc[-1]
-            # bb_middle = df["bb_middle"].iloc[-1]
+            bb_middle = df["bb_middle"].iloc[-1]  # Added for reference
             ema = df["ema"].iloc[-1]
             stoch_k = df["stoch_k"].iloc[-1]
             stoch_d = df["stoch_d"].iloc[-1]
 
+            # Calculate distances and percentages for better context
+            bb_upper_distance = ((bb_upper - current_price) / current_price) * 100
+            bb_lower_distance = ((current_price - bb_lower) / current_price) * 100
+            ema_distance = ((current_price - ema) / current_price) * 100
+            stoch_diff = stoch_k - stoch_d
+
+            # Store conditions for this timeframe
+            timeframe_conditions[tf] = {
+                "price": current_price,
+                "bb_upper": bb_upper,
+                "bb_middle": bb_middle,
+                "bb_lower": bb_lower,
+                "ema": ema,
+                "stoch_k": stoch_k,
+                "stoch_d": stoch_d,
+                "bb_upper_distance": f"{bb_upper_distance:.2f}%",
+                "bb_lower_distance": f"{bb_lower_distance:.2f}%",
+                "ema_distance": f"{ema_distance:.2f}%",
+                "stoch_diff": stoch_diff,
+                "is_oversold": stoch_k < self.stoch_oversold,
+                "is_overbought": stoch_k > self.stoch_overbought,
+                "stoch_crossover": stoch_k > stoch_d,
+                "stoch_crossunder": stoch_k < stoch_d,
+                "price_below_bb_lower": current_price < bb_lower,
+                "price_above_bb_upper": current_price > bb_upper,
+                "price_above_ema": current_price > ema,
+                "price_below_ema": current_price < ema,
+            }
+
             logger.debug(
                 f"Indicators for {tf}",
                 timeframe=tf,
-                price=current_price,
-                bb_upper=bb_upper,
-                bb_lower=bb_lower,
-                ema=ema,
-                stoch_k=stoch_k,
-                stoch_d=stoch_d,
+                **timeframe_conditions[tf]
             )
 
             # Signal conditions
             # Long signal
-            if (
-                current_price < bb_lower  # Price below lower BB
-                and current_price > ema  # Price above EMA
-                and stoch_k < self.stoch_oversold  # Oversold
-                and stoch_k > stoch_d
-            ):  # Stoch crossover
+            buy_conditions = {
+                "price_below_bb_lower": current_price < bb_lower,
+                "price_above_ema": current_price > ema,
+                "stoch_oversold": stoch_k < self.stoch_oversold,
+                "stoch_crossover": stoch_k > stoch_d
+            }
+
+            # Short signal
+            sell_conditions = {
+                "price_above_bb_upper": current_price > bb_upper,
+                "price_below_ema": current_price < ema,
+                "stoch_overbought": stoch_k > self.stoch_overbought,
+                "stoch_crossunder": stoch_k < stoch_d
+            }
+
+            # Check if all buy conditions are met
+            if all(buy_conditions.values()):
                 tf_weight = self._get_timeframe_weight(tf)
                 signals.append(("buy", tf_weight))
                 logger.info(
                     f"Buy signal detected in {tf} timeframe",
                     timeframe=tf,
                     weight=tf_weight,
+                    conditions=buy_conditions,
                     price=current_price,
                     bb_lower=bb_lower,
+                    stoch_k=stoch_k,
+                    stoch_d=stoch_d
                 )
-
-            # Short signal
-            elif (
-                current_price > bb_upper  # Price above upper BB
-                and current_price < ema  # Price below EMA
-                and stoch_k > self.stoch_overbought  # Overbought
-                and stoch_k < stoch_d
-            ):  # Stoch crossunder
+            # Check if all sell conditions are met
+            elif all(sell_conditions.values()):
                 tf_weight = self._get_timeframe_weight(tf)
                 signals.append(("sell", tf_weight))
                 logger.info(
-                    f"Stochastic crossover detected: K={stoch_k}, D={stoch_d}",
+                    f"Sell signal detected in {tf} timeframe",
                     timeframe=tf,
                     weight=tf_weight,
+                    conditions=sell_conditions,
                     price=current_price,
                     bb_upper=bb_upper,
+                    stoch_k=stoch_k,
+                    stoch_d=stoch_d
                 )
+            else:
+                # Log which conditions were not met for debugging
+                if any(buy_conditions.values()):
+                    failed_buy = {k: v for k, v in buy_conditions.items() if not v}
+                    logger.debug(
+                        f"Some buy conditions not met in {tf}",
+                        timeframe=tf,
+                        failed_conditions=failed_buy
+                    )
+                if any(sell_conditions.values()):
+                    failed_sell = {k: v for k, v in sell_conditions.items() if not v}
+                    logger.debug(
+                        f"Some sell conditions not met in {tf}",
+                        timeframe=tf,
+                        failed_conditions=failed_sell
+                    )
+
+        # Log overall conditions summary
+        logger.info(
+            f"Signal analysis complete across {len(available_timeframes)} timeframes",
+            signals_detected=len(signals),
+            timeframe_conditions=timeframe_conditions
+        )
 
         # Aggregate signals
         if not signals:
+            logger.info("No trading signals detected in any timeframe")
             return "neutral", 0.0, {"stop_loss": 0.0, "take_profit": 0.0}
 
         # Calculate final signal and confidence
@@ -194,18 +291,31 @@ class BollStochStrategy:
         if buy_weight > sell_weight:
             signal = "buy"
             confidence = buy_weight / (buy_weight + sell_weight)
+            logger.info(
+                f"Final signal: BUY with confidence {confidence:.2f}",
+                buy_weight=buy_weight,
+                sell_weight=sell_weight,
+                confidence=confidence
+            )
         elif sell_weight > buy_weight:
             signal = "sell"
             confidence = sell_weight / (buy_weight + sell_weight)
+            logger.info(
+                f"Final signal: SELL with confidence {confidence:.2f}",
+                buy_weight=buy_weight,
+                sell_weight=sell_weight,
+                confidence=confidence
+            )
         else:
             signal = "neutral"
             confidence = 0.0
+            logger.info("Final signal: NEUTRAL (equal weights)")
 
         # Calculate stop loss and take profit levels
         levels = self._calculate_risk_levels(
             signal,
             # Use the shortest available timeframe's data for levels, or handle missing data
-            timeframe_data.get(min(available_timeframes, key=lambda x: pd.Timedelta(x)), pd.DataFrame()), 
+            timeframe_data.get(min(available_timeframes, key=lambda x: pd.Timedelta(x)), pd.DataFrame()),
             confidence,
         )
 
@@ -214,7 +324,9 @@ class BollStochStrategy:
     def _get_timeframe_weight(self, timeframe: str) -> float:
         """Get weight for timeframe importance."""
         weights = {"15m": 0.1, "1h": 0.3, "4h": 0.3, "1d": 0.3}
-        return weights.get(timeframe, 0.0)
+        weight = weights.get(timeframe, 0.1)  # Default to 0.1 for unknown timeframes
+        logger.debug(f"Timeframe weight for {timeframe}: {weight}")
+        return weight
 
     def _calculate_risk_levels(
         self, signal: str, df: pd.DataFrame, confidence: float
