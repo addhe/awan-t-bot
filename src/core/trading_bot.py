@@ -230,7 +230,6 @@ class TradingBot:
                 await self.position_manager.open_position(
                     symbol=symbol,
                     quantity=quantity,
-                    entry_price=current_price,
                     risk_level=risk_levels,
                     confidence=confidence,
                     pair_config=pair_config,
