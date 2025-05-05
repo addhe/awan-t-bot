@@ -294,9 +294,9 @@ class TradingBot:
 
         # Send status to Telegram if enabled
         if TELEGRAM_CONFIG["enabled"]:
-            # Only send status update every hour
+            # Send status update based on configured interval
             now = time.time()
-            if now - self.last_status_update >= 3600:  # 1 hour
+            if now - self.last_status_update >= SYSTEM_CONFIG.get("status_update_interval_seconds", 3600):
                 await send_telegram_message(
                     self.monitor.format_status_message()
                 )

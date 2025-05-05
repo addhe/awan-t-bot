@@ -347,7 +347,12 @@ class BotStatusMonitor:
             for trade in trades:
                 msg += f"\n{trade['symbol']}:\n"
                 msg += f"Entry: {trade['entry_price']:.8f}\n"
-                msg += f"Current: {trade.get('current_price', 'N/A')}\n"
+                # Format current price consistently with entry price
+                current_price = trade.get('current_price', 'N/A')
+                if isinstance(current_price, (int, float)):
+                    msg += f"Current: {current_price:.8f}\n"
+                else:
+                    msg += f"Current: {current_price}\n"
                 msg += f"P/L: {trade.get('pnl', 0):.2f}%\n"
 
             perf = status.get("performance", {})
