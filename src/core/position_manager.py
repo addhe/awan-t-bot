@@ -36,6 +36,38 @@ class PositionManager:
         self.config = trading_config
         self.monitor = monitor
         self.active_trades = {}
+        
+        # Load active trades from status file
+        self._load_active_trades_from_status()
+        
+    def _load_active_trades_from_status(self):
+        """Load active trades from status file to ensure consistency"""
+        try:
+            # Get active trades from status monitor
+            status_trades = self.monitor.get_active_trades()
+            
+            if status_trades:
+                logger.info(f"Loading {len(status_trades)} active trades from status file")
+                
+                # Convert to the format expected by position manager
+                for trade in status_trades:
+                    symbol = trade.get("symbol")
+                    if not symbol:
+                        continue
+                        
+                    self.active_trades[symbol] = {
+                        "entry_price": trade.get("entry_price", 0),
+                        "quantity": trade.get("quantity", 0),
+                        "entry_time": trade.get("entry_time", datetime.now().isoformat()),
+                        "stop_loss": trade.get("stop_loss", 0),
+                        "take_profit": trade.get("take_profit", 0),
+                        "confidence": trade.get("confidence", 0.5),
+                        "order_id": trade.get("order_id", "")
+                    }
+                    
+                logger.info(f"Loaded {len(self.active_trades)} active trades: {list(self.active_trades.keys())}")
+        except Exception as e:
+            logger.error(f"Error loading active trades from status: {e}", exc_info=True)
 
     @handle_exchange_errors(notify=True)
     async def open_position(
