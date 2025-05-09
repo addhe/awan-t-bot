@@ -191,6 +191,42 @@ class PositionManager:
         trade = self.active_trades[symbol]
         entry_price = trade["entry_price"]  # Actual entry price
         quantity = trade["quantity"]  # Actual filled quantity
+        
+        # Extract base currency from symbol
+        base_currency = None
+        if symbol.endswith('USDT'):
+            base_currency = symbol[:-4]  # Remove 'USDT'
+        elif '/' in symbol:
+            base_currency = symbol.split('/')[0]  # Split at '/' and take first part
+        
+        # Check if we have enough balance before attempting to sell
+        if base_currency:
+            balances = await self.exchange.get_all_balances()
+            available_balance = balances.get(base_currency, 0)
+            
+            if available_balance < quantity * 0.99:  # Allow for small rounding differences (99% of expected)
+                logger.warning(
+                    f"Insufficient balance to close position for {symbol}",
+                    symbol=symbol,
+                    required_quantity=quantity,
+                    available_balance=available_balance,
+                    base_currency=base_currency
+                )
+                
+                # Remove from active trades since we can't actually sell it
+                del self.active_trades[symbol]
+                await self._update_trades_status()
+                
+                # Return a special result indicating position was removed but not sold
+                return {
+                    "symbol": symbol,
+                    "entry_price": entry_price,
+                    "exit_price": 0,  # No actual exit since we couldn't sell
+                    "quantity": 0,    # No quantity sold
+                    "profit": 0,      # Can't calculate profit
+                    "close_reason": f"removed_insufficient_balance",
+                    "order_id": None
+                }
 
         logger.info(
             f"Attempting to close position for {symbol}",
