@@ -331,6 +331,20 @@ class PositionManager:
                     take_profit_pct=self.config.get("take_profit_pct", 0.03),
                 )
 
+                # If take_profit_price is not set or 0, calculate it based on config
+                if trade.get("take_profit", 0) == 0 and entry_price > 0:
+                    take_profit_pct = self.config.get("take_profit_pct", 0.03)  # Default 3%
+                    take_profit_price = entry_price * (1 + take_profit_pct)
+                    logger.info(
+                        f"Setting missing take_profit_price for {symbol}",
+                        symbol=symbol,
+                        entry_price=entry_price,
+                        take_profit_pct=take_profit_pct,
+                        take_profit_price=take_profit_price
+                    )
+                    # Update the trade with the calculated take_profit_price
+                    trade["take_profit"] = take_profit_price
+
                 # Determine trigger conditions using potentially updated SL
                 stop_loss_triggered = (
                     trade.get("stop_loss", 0) > 0
@@ -340,13 +354,11 @@ class PositionManager:
                     trade.get("take_profit", 0) > 0
                     and current_price >= trade.get("take_profit", 0)
                 )
-                stop_loss_price > 0
-                and current_price <= stop_loss_price
-            )
-            take_profit_triggered = (
-                take_profit_price > 0
-                and current_price >= take_profit_price
-            )
+
+                # Close if TP/SL (potentially trailed) or strategy signal triggered
+                if should_sell or stop_loss_triggered or take_profit_triggered:
+                    close_reason = (
+                        "signal"
                         if should_sell
                         else (
                             "stop_loss"
