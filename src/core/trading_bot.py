@@ -139,9 +139,9 @@ class TradingBot:
         if not pair_timeframes:
             logger.warning(f"No timeframes defined for {symbol}", symbol=symbol)
             return False
-            
+
         logger.debug(f"Fetching data for {symbol} on timeframes: {pair_timeframes}", symbol=symbol, timeframes=pair_timeframes)
-        
+
         for tf in pair_timeframes: # Use pair-specific timeframes
             df = await self.exchange.fetch_ohlcv(
                 symbol, timeframe=tf, limit=100
@@ -163,7 +163,7 @@ class TradingBot:
             signal, confidence, risk_levels = self.strategy.analyze_signals(
                 timeframe_data
             )
-            
+
             # Validate strategy return values
             if signal is None or confidence is None or risk_levels is None:
                 logger.warning(
@@ -173,7 +173,7 @@ class TradingBot:
                     confidence=confidence,
                 )
                 return False
-                
+
             logger.debug(
                 f"Signal analysis for {symbol}",
                 symbol=symbol,
@@ -268,6 +268,13 @@ class TradingBot:
 
         # Get performance metrics
         performance = self._calculate_performance()
+
+        # Update active trades status to get current prices
+        if self.position_manager.active_trades:
+            logger.debug(
+                f"Updating current prices for {len(self.position_manager.active_trades)} active trades"
+            )
+            await self.position_manager._update_trades_status()
 
         # Prepare status update
         status = {
@@ -372,7 +379,7 @@ class TradingBot:
             await send_telegram_message("🤖 Trading bot started")
 
         # Get configured intervals
-        check_interval = SYSTEM_CONFIG.get("main_loop_interval_seconds", 60) 
+        check_interval = SYSTEM_CONFIG.get("main_loop_interval_seconds", 60)
         status_update_interval = SYSTEM_CONFIG.get("status_update_interval_seconds", 3600)
         health_check_interval = SYSTEM_CONFIG.get("health_check_interval_seconds", 300)
 

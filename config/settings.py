@@ -72,7 +72,7 @@ SYSTEM_CONFIG = {
     
     # Intervals
     "main_loop_interval_seconds": 60, # Interval for the main processing loop
-    "status_update_interval_seconds": 3600, # How often to log/send status updates (1 hour)
+    "status_update_interval_seconds": 300, # How often to log/send status updates (5 minutes)
     "health_check_interval_seconds": 300, # How often to check exchange/system health (5 minutes)
 }
 
