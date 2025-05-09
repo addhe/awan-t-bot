@@ -256,10 +256,10 @@ class PositionManager:
         position_count = len(self.active_trades)
 
         if position_count == 0:
-            logger.debug("No active positions to check")
+            logger.info("No active positions to check")
             return []
 
-        logger.info(f"Checking {position_count} active positions")
+        logger.info(f"Checking {position_count} active positions: {list(self.active_trades.keys())}")
 
         # Get trailing stop config once
         tsl_pct = self.config.get("trailing_stop_pct", 0)
@@ -316,43 +316,37 @@ class PositionManager:
                 # Check strategy for exit signal
                 should_sell, confidence = strategy.should_sell(df)
 
-                # Check stop loss and take profit using ACTUAL entry price and potentially UPDATED SL
-                stop_loss_price = trade.get("stop_loss", 0) # Use the potentially updated SL
-                take_profit_price = trade.get("take_profit", 0)
-
-                # Calculate current PnL for logging/decision making if needed
-                current_pnl = 0.0
-                if entry_price != 0:
-                    current_pnl = ((current_price - entry_price) / entry_price) * 100
-
-                # Determine trigger conditions using potentially updated SL
-                stop_loss_triggered = (
-                    stop_loss_price > 0
-                    and current_price <= stop_loss_price
-                )
-                take_profit_triggered = (
-                    take_profit_price > 0
-                    and current_price >= take_profit_price
-                )
-
-                logger.debug(
+                logger.info(
                     f"Position check for {symbol}",
                     symbol=symbol,
                     current_price=current_price,
                     entry_price=entry_price,
-                    pnl=f"{current_pnl:.2f}%",
-                    stop_loss_level=stop_loss_price, # Log the actual SL being checked
-                    take_profit_level=take_profit_price,
+                    pnl=f"{((current_price - entry_price) / entry_price) * 100:.2f}%",
+                    stop_loss_level=trade.get("stop_loss", 0), # Log the actual SL being checked
+                    take_profit_level=trade.get("take_profit", 0),
                     trailing_stop_updated_this_cycle=trailing_stop_updated,
                     should_sell_signal=should_sell,
-                    stop_loss_triggered=stop_loss_triggered,
-                    take_profit_triggered=take_profit_triggered,
+                    stop_loss_triggered=current_price <= trade.get("stop_loss", 0),
+                    take_profit_triggered=current_price >= trade.get("take_profit", 0),
+                    take_profit_pct=self.config.get("take_profit_pct", 0.03),
                 )
 
-                # Close if TP/SL (potentially trailed) or strategy signal triggered
-                if should_sell or stop_loss_triggered or take_profit_triggered:
-                    close_reason = (
-                        "signal"
+                # Determine trigger conditions using potentially updated SL
+                stop_loss_triggered = (
+                    trade.get("stop_loss", 0) > 0
+                    and current_price <= trade.get("stop_loss", 0)
+                )
+                take_profit_triggered = (
+                    trade.get("take_profit", 0) > 0
+                    and current_price >= trade.get("take_profit", 0)
+                )
+                stop_loss_price > 0
+                and current_price <= stop_loss_price
+            )
+            take_profit_triggered = (
+                take_profit_price > 0
+                and current_price >= take_profit_price
+            )
                         if should_sell
                         else (
                             "stop_loss"
