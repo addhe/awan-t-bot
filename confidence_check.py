@@ -64,26 +64,27 @@ async def analyze_confidence_from_logs(hours=1, detailed=False):
     # Read last part of log file
     try:
         with open(log_file, "r") as f:
-            # Get file size and seek to end minus ~100KB or start of file
+            # Get file size and seek to end minus ~500KB or start of file
             f.seek(0, 2)  # Seek to end
             file_size = f.tell()
-            f.seek(max(0, file_size - 200000), 0)  # Go back ~200KB
-            lines = f.readlines()
-            # Limit to last 2000 lines
-            lines = lines[-2000:]
+            f.seek(max(0, file_size - 500000), 0)  # Go back ~500KB
+            content = f.read()
+            lines = content.split('\n')
+            # Limit to last 5000 lines
+            lines = lines[-5000:]
     except Exception as e:
         print(f"⚠️ Error reading log file: {e}")
         return {}
     
     # Extract confidence levels using regex
     confidence_data = {}
-    signal_pattern = re.compile(r"Signal analysis complete across \d+ timeframes.*Context: \{.*?'signals_detected': (\d+).*?'timeframe_conditions': \{(.*?)\}\}")
     symbol_pattern = re.compile(r"Processing pair ([A-Z]+/[A-Z]+|[A-Z]+USDT)")
     
     current_symbol = None
     cutoff_time = datetime.now() - timedelta(hours=hours)
     
-    for line in lines:
+    # Process lines in reverse to get most recent data first
+    for i, line in enumerate(lines):
         # Extract timestamp
         try:
             timestamp_str = line.split(" - ")[0].strip()
@@ -100,35 +101,72 @@ async def analyze_confidence_from_logs(hours=1, detailed=False):
             continue
         
         # Extract signal analysis data
-        if current_symbol and "Signal analysis complete" in line:
-            signal_match = signal_pattern.search(line)
-            if signal_match:
-                signals_detected = int(signal_match.group(1))
-                timeframe_data = signal_match.group(2)
+        if current_symbol and "Signal analysis complete across" in line:
+            # Get the timeframe conditions from the log
+            try:
+                # Extract the JSON-like part containing timeframe conditions
+                start_idx = line.find("'timeframe_conditions': {")
+                if start_idx == -1:
+                    continue
+                    
+                # Find the matching closing brace
+                brace_count = 0
+                end_idx = -1
+                for j in range(start_idx, len(line)):
+                    if line[j] == '{':
+                        brace_count += 1
+                    elif line[j] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_idx = j + 1
+                            break
                 
-                # Calculate confidence based on conditions
-                confidence = 0.0
+                if end_idx == -1:
+                    continue
+                    
+                # Extract the timeframe conditions part
+                timeframe_part = line[start_idx:end_idx]
                 
-                # Extract detailed conditions for each timeframe
+                # Extract signals detected
+                signals_detected = 0
+                signals_match = re.search(r"'signals_detected': (\d+)", line)
+                if signals_match:
+                    signals_detected = int(signals_match.group(1))
+                
+                # Extract conditions for each timeframe
                 timeframe_conditions = {}
-                for tf in ['15m', '1h', '4h', '1d']:
-                    if tf in timeframe_data:
-                        tf_data = {}
-                        # Extract key conditions
-                        for condition in ['is_oversold', 'is_overbought', 'stoch_crossover', 
-                                         'stoch_crossunder', 'price_above_ema', 'price_below_ema',
-                                         'price_above_bb_upper', 'price_below_bb_lower']:
-                            pattern = f"'{condition}': (True|False)"
-                            match = re.search(pattern, timeframe_data)
-                            if match:
-                                tf_data[condition] = match.group(1) == 'True'
-                        
-                        timeframe_conditions[tf] = tf_data
                 
-                # Simple heuristic: check how many buy conditions are met
+                # Extract 1h timeframe conditions
+                for tf in ['1h', '4h']:
+                    tf_pattern = f"'{tf}': \{{(.*?)\}}"
+                    tf_match = re.search(tf_pattern, timeframe_part)
+                    if tf_match:
+                        tf_data = tf_match.group(1)
+                        conditions = {}
+                        
+                        # Extract boolean conditions
+                        for condition in ['is_oversold', 'is_overbought', 'stoch_crossover', 
+                                         'stoch_crossunder', 'price_below_bb_lower', 'price_above_bb_upper',
+                                         'price_above_ema', 'price_below_ema']:
+                            cond_pattern = f"'{condition}': np\.([A-Za-z_]+)"
+                            cond_match = re.search(cond_pattern, tf_data)
+                            if cond_match:
+                                conditions[condition] = cond_match.group(1) == 'True_'
+                        
+                        # Extract numeric values
+                        for value in ['price', 'bb_upper', 'bb_lower', 'ema', 'stoch_k', 'stoch_d']:
+                            val_pattern = f"'{value}': np\.float64\(([\d\.]+)\)"
+                            val_match = re.search(val_pattern, tf_data)
+                            if val_match:
+                                conditions[value] = float(val_match.group(1))
+                        
+                        timeframe_conditions[tf] = conditions
+                
+                # Calculate confidence based on buy conditions
                 conditions_met = 0
                 total_conditions = 0
                 
+                # Check conditions for each timeframe
                 for tf, conditions in timeframe_conditions.items():
                     # Buy conditions from strategy
                     if conditions.get('is_oversold', False):
@@ -141,17 +179,22 @@ async def analyze_confidence_from_logs(hours=1, detailed=False):
                         conditions_met += 1
                     total_conditions += 4
                 
+                # Calculate confidence
+                confidence = 0.0
                 if total_conditions > 0:
                     confidence = conditions_met / total_conditions
-                    
-                    # Store the confidence level
-                    if current_symbol not in confidence_data or timestamp > datetime.fromisoformat(confidence_data[current_symbol]["timestamp"]):
-                        confidence_data[current_symbol] = {
-                            "confidence": confidence,
-                            "timestamp": timestamp.isoformat(),
-                            "signals_detected": signals_detected,
-                            "conditions": timeframe_conditions if detailed else None
-                        }
+                
+                # Store the confidence level
+                if current_symbol not in confidence_data or timestamp > datetime.fromisoformat(confidence_data[current_symbol]["timestamp"]):
+                    confidence_data[current_symbol] = {
+                        "confidence": confidence,
+                        "timestamp": timestamp.isoformat(),
+                        "signals_detected": signals_detected,
+                        "conditions": timeframe_conditions if detailed else None
+                    }
+            except Exception as e:
+                print(f"⚠️ Error parsing conditions for {current_symbol}: {e}")
+                continue
     
     return confidence_data
 
