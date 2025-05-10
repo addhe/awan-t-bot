@@ -9,7 +9,8 @@ SCRIPT_PATH="$BOT_DIR/bot.py"
 
 # Function to get PID of run.sh
 get_run_script_pid() {
-    pgrep -f "bash.*$RUN_SCRIPT"
+    # More robust detection of run.sh processes
+    pgrep -f "./run.sh" || pgrep -f "bash.*run.sh" || ps aux | grep "[r]un.sh" | awk '{print $2}'
 }
 
 # Function to get all bot.py PIDs
