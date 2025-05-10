@@ -428,7 +428,16 @@ class BotStatusMonitor:
                     msg += "\n🎯 Current Confidence Levels:\n"
                     for symbol, data in confidence_data.items():
                         if symbol != "last_updated" and isinstance(data, dict) and "confidence" in data:
-                            msg += f"{symbol}: {data['confidence']:.2f}\n"
+                            # Format timestamp
+                            timestamp_str = ""
+                            try:
+                                if "timestamp" in data:
+                                    dt = datetime.fromisoformat(data["timestamp"])
+                                    timestamp_str = f" (updated: {dt.strftime('%H:%M:%S')})"
+                            except:
+                                pass
+                            
+                            msg += f"{symbol}: {data['confidence']:.2f}{timestamp_str}\n"
             except Exception as e:
                 logger.error(f"Error adding confidence levels to status: {str(e)}")
                 # Continue without confidence levels

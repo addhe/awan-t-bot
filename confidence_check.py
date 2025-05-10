@@ -190,7 +190,9 @@ async def analyze_confidence_from_logs(hours=1, detailed=False):
                         "confidence": confidence,
                         "timestamp": timestamp.isoformat(),
                         "signals_detected": signals_detected,
-                        "conditions": timeframe_conditions if detailed else None
+                        "conditions": timeframe_conditions if detailed else None,
+                        "calculation_method": "confidence_check",
+                        "analyzed_timeframes": list(timeframe_conditions.keys())
                     }
             except Exception as e:
                 print(f"⚠️ Error parsing conditions for {current_symbol}: {e}")
@@ -247,15 +249,19 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
         confidence = data.get("confidence", 0)
         timestamp = data.get("timestamp", "Unknown")
         signals = data.get("signals_detected", 0)
+        calculation_method = data.get("calculation_method", "Unknown")
+        analyzed_timeframes = data.get("analyzed_timeframes", [])
         
         # Format timestamp
         try:
             dt = datetime.fromisoformat(timestamp)
             formatted_time = dt.strftime("%H:%M:%S")
+            formatted_date = dt.strftime("%Y-%m-%d")
             age = datetime.now() - dt
             age_str = f"{int(age.total_seconds() / 60)}m ago"
         except:
             formatted_time = "Unknown"
+            formatted_date = "Unknown"
             age_str = "Unknown"
         
         # Get market data if available
@@ -268,14 +274,15 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
             symbol,
             f"{confidence:.2f}",
             signals,
-            formatted_time,
+            f"{formatted_date} {formatted_time}",
             age_str,
-            price
+            price,
+            ", ".join(analyzed_timeframes)
         ])
     
     # Display table
     if table_data:
-        headers = ["Symbol", "Confidence", "Signals", "Time", "Age", "Current Price"]
+        headers = ["Symbol", "Confidence", "Signals", "Timestamp", "Age", "Current Price", "Timeframes"]
         print("\n🎯 Confidence Levels Report\n")
         print(tabulate(table_data, headers=headers, tablefmt="pretty"))
         print(f"\nAnalyzed logs from the past {hours} hour(s)")

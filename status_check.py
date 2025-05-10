@@ -23,7 +23,7 @@ async def extract_confidence_from_logs(monitor):
         print("⚠️ Log file not found, skipping confidence extraction")
         return
     
-    # Read last 1000 lines from log file (to limit memory usage)
+    # Read last part of log file (to limit memory usage)
     try:
         with open(log_file, "r") as f:
             # Get file size and seek to end minus ~100KB or start of file
@@ -39,7 +39,6 @@ async def extract_confidence_from_logs(monitor):
     
     # Extract confidence levels using regex
     confidence_data = {}
-    signal_pattern = re.compile(r"Signal analysis complete across \d+ timeframes.*Context: \{.*?'signals_detected': (\d+).*?'timeframe_conditions': \{(.*?)\}\}")
     symbol_pattern = re.compile(r"Processing pair ([A-Z]+/[A-Z]+|[A-Z]+USDT)")
     
     current_symbol = None
@@ -62,39 +61,93 @@ async def extract_confidence_from_logs(monitor):
             continue
         
         # Extract signal analysis data
-        if current_symbol and "Signal analysis complete" in line:
-            signal_match = signal_pattern.search(line)
-            if signal_match:
-                signals_detected = int(signal_match.group(1))
-                timeframe_data = signal_match.group(2)
+        if current_symbol and "Signal analysis complete across" in line:
+            # Get the timeframe conditions from the log
+            try:
+                # Extract the JSON-like part containing timeframe conditions
+                start_idx = line.find("'timeframe_conditions': {")
+                if start_idx == -1:
+                    continue
+                    
+                # Find the matching closing brace
+                brace_count = 0
+                end_idx = -1
+                for j in range(start_idx, len(line)):
+                    if line[j] == '{':
+                        brace_count += 1
+                    elif line[j] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_idx = j + 1
+                            break
                 
-                # Calculate confidence based on conditions
-                confidence = 0.0
+                if end_idx == -1:
+                    continue
+                    
+                # Extract the timeframe conditions part
+                timeframe_part = line[start_idx:end_idx]
                 
-                # Simple heuristic: check how many conditions are met in the timeframes
+                # Extract signals detected
+                signals_detected = 0
+                signals_match = re.search(r"'signals_detected': (\d+)", line)
+                if signals_match:
+                    signals_detected = int(signals_match.group(1))
+                
+                # Extract conditions for each timeframe
+                timeframe_conditions = {}
+                
+                # Extract 1h and 4h timeframe conditions
+                for tf in ['1h', '4h']:
+                    tf_pattern = f"'{tf}': \{{(.*?)\}}"
+                    tf_match = re.search(tf_pattern, timeframe_part)
+                    if tf_match:
+                        tf_data = tf_match.group(1)
+                        conditions = {}
+                        
+                        # Extract boolean conditions
+                        for condition in ['is_oversold', 'is_overbought', 'stoch_crossover', 
+                                        'stoch_crossunder', 'price_below_bb_lower', 'price_above_bb_upper',
+                                        'price_above_ema', 'price_below_ema']:
+                            cond_pattern = f"'{condition}': np\.([A-Za-z_]+)"
+                            cond_match = re.search(cond_pattern, tf_data)
+                            if cond_match:
+                                conditions[condition] = cond_match.group(1) == 'True_'
+                        
+                        timeframe_conditions[tf] = conditions
+                
+                # Calculate confidence based on buy conditions
                 conditions_met = 0
                 total_conditions = 0
                 
-                for tf in ['1h', '4h']:
-                    if tf in timeframe_data:
-                        # Count positive conditions
-                        if f"'is_oversold': True" in timeframe_data:
-                            conditions_met += 1
-                        if f"'price_above_ema': True" in timeframe_data:
-                            conditions_met += 1
-                        if f"'stoch_crossover': True" in timeframe_data:
-                            conditions_met += 1
-                        total_conditions += 3
+                # Check conditions for each timeframe
+                for tf, conditions in timeframe_conditions.items():
+                    # Buy conditions from strategy
+                    if conditions.get('is_oversold', False):
+                        conditions_met += 1
+                    if conditions.get('price_above_ema', False):
+                        conditions_met += 1
+                    if conditions.get('stoch_crossover', False):
+                        conditions_met += 1
+                    if conditions.get('price_below_bb_lower', False):
+                        conditions_met += 1
+                    total_conditions += 4
                 
+                # Calculate confidence
+                confidence = 0.0
                 if total_conditions > 0:
                     confidence = conditions_met / total_conditions
-                    
-                    # Store the confidence level
-                    confidence_data[current_symbol] = {
-                        "confidence": confidence,
-                        "timestamp": timestamp.isoformat(),
-                        "signals_detected": signals_detected
-                    }
+                
+                # Store the confidence level
+                confidence_data[current_symbol] = {
+                    "confidence": confidence,
+                    "timestamp": timestamp.isoformat(),
+                    "signals_detected": signals_detected,
+                    "calculation_method": "status_check",
+                    "analyzed_timeframes": list(timeframe_conditions.keys())
+                }
+            except Exception as e:
+                print(f"⚠️ Error parsing conditions for {current_symbol}: {e}")
+                continue
     
     # Update confidence levels in status file
     if confidence_data:
