@@ -1,6 +1,15 @@
 # Awan Trading Bot
 
-## Latest Update (2025-05-04)
+## Latest Update (2025-05-10)
+
+Enhanced monitoring and position management:
+- Added confidence level monitoring system for trading signals
+- Improved position tracking with balance verification
+- Fixed take profit execution and position status updates
+- Enhanced error handling for insufficient balance scenarios
+- Added detailed signal analysis and visualization tools
+
+## Previous Update (2025-05-04)
 
 Major refactoring and code improvements:
 - Restructured codebase into modular components
@@ -44,13 +53,16 @@ The bot implements a sophisticated multi-timeframe analysis strategy using:
 ## Technical Features
 - Real-time market data analysis
 - Multi-timeframe signal weighting
+- Confidence level monitoring and analysis
 - Telegram notifications for:
   - Trade entries/exits
   - Risk alerts
   - System status
+  - Confidence levels
 - Performance tracking
 - System health monitoring
 - Error recovery system
+- Balance verification for position management
 
 ## Project Structure
 ```
@@ -70,6 +82,12 @@ src/
        ├── status_monitor.py   # Bot status monitoring
        ├── structured_logger.py # Enhanced logging
        └── telegram_utils.py   # Telegram notifications
+
+# Utility Scripts
+confidence_check.py      # Analyze and display confidence levels
+status_check.py          # Check bot status and active trades
+run.sh                   # Start the trading bot
+stop.sh                  # Stop the trading bot gracefully
 ```
 
 ## Installation
@@ -175,8 +193,17 @@ python -m pytest tests/unit --cov=src
 
 1. Via Command Line:
 ```bash
-# Check current status
+# Check current status and confidence levels
 ./status_check.py
+
+# Check detailed confidence levels
+./confidence_check.py
+
+# View confidence levels from past hours
+./confidence_check.py -t 3
+
+# View detailed trading conditions
+./confidence_check.py -d
 ```
 
 2. Via Status Files:
@@ -186,12 +213,16 @@ cat status/bot_status.json
 
 # Active trades
 cat status/active_trades.json
+
+# Confidence levels
+cat status/confidence_levels.json
 ```
 
 3. Via Telegram:
 - Hourly status updates
 - Trade notifications
 - Error alerts
+- Confidence level updates
 
 ### Status Report Example
 ```
@@ -209,11 +240,16 @@ BTC/USDT:
 Entry: 40000.00000000
 Current: 40100.00000000
 P/L: +0.25%
+Confidence: 0.75
 
 📈 Performance (24h):
 Trades: 8
 Win Rate: 75.0%
 Profit: 2.15%
+
+🎯 Current Confidence Levels:
+BTCUSDT: 0.62
+ETHUSDT: 0.62
 ```
 
 ### Safety Features
@@ -299,6 +335,23 @@ Bot aman untuk di-restart kapanpun menggunakan `run.sh` karena memiliki beberapa
 - Check minimum trade size (15 USDT)
 - Verify asset conversion settings
 ```
+
+## Trading Frequency Expectations
+
+The bot uses a conservative trading strategy that prioritizes quality signals over quantity of trades. With the default configuration (`min_confidence: 0.7`), the bot may not trade for several hours or even days if market conditions don't meet the required criteria.
+
+Factors affecting trading frequency:
+
+1. **Confidence Threshold**: The bot only trades when confidence level exceeds 70% (configurable)
+2. **Market Conditions**: All required conditions must align across multiple timeframes
+3. **Trading Pairs**: Limited to configured pairs (default: BTC/USDT, ETH/USDT, SOL/USDT)
+
+To increase trading frequency, you can:
+- Lower the confidence threshold in `config/strategy_config.py` (`min_confidence: 0.6`)
+- Add more trading pairs
+- Adjust timeframe weights to favor shorter timeframes
+
+Use the `confidence_check.py` tool to monitor how close the bot is to executing trades.
 
 ## License
 
