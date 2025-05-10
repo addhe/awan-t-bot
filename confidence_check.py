@@ -64,14 +64,15 @@ async def analyze_confidence_from_logs(hours=1, detailed=False):
     # Read last part of log file
     try:
         with open(log_file, "r") as f:
-            # Get file size and seek to end minus ~500KB or start of file
+            # Get file size and seek to end minus ~1MB or start of file
             f.seek(0, 2)  # Seek to end
             file_size = f.tell()
-            f.seek(max(0, file_size - 500000), 0)  # Go back ~500KB
+            f.seek(max(0, file_size - 1000000), 0)  # Go back ~1MB (increased from 500KB)
             content = f.read()
             lines = content.split('\n')
-            # Limit to last 5000 lines
-            lines = lines[-5000:]
+            # Limit to last 10000 lines (increased from 5000)
+            lines = lines[-10000:]
+            print(f"Read {len(lines)} lines from log file (last ~1MB)")
     except Exception as e:
         print(f"⚠️ Error reading log file: {e}")
         return {}
@@ -82,6 +83,7 @@ async def analyze_confidence_from_logs(hours=1, detailed=False):
     
     current_symbol = None
     cutoff_time = datetime.now() - timedelta(hours=hours)
+    print(f"Looking for logs since {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Process lines in reverse to get most recent data first
     for i, line in enumerate(lines):
@@ -216,8 +218,33 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
         try:
             monitor.update_confidence_levels(log_confidence)
             print(f"✅ Updated confidence levels for {len(log_confidence)} symbols")
+            for symbol, data in log_confidence.items():
+                print(f"  - {symbol}: {data['confidence']:.2f} (from log at {data['timestamp']})")
         except Exception as e:
             print(f"⚠️ Error updating confidence levels: {e}")
+    elif update_status:
+        print("\n⚠️ No new confidence data found in logs for the specified time period.")
+        print("Possible reasons:")
+        print("  - No trading pairs were processed in the specified time window")
+        print("  - Log format has changed")
+        print("  - Bot is not logging signal analysis")
+        print("Keeping previous confidence levels if available.")
+        
+        # Try to display current confidence levels
+        current_levels = monitor.get_confidence_levels()
+        if current_levels and any(k != "last_updated" for k in current_levels.keys()):
+            print("\nCurrent confidence levels in status file:")
+            for symbol, data in current_levels.items():
+                if symbol != "last_updated" and isinstance(data, dict) and "confidence" in data:
+                    try:
+                        timestamp = datetime.fromisoformat(data.get('timestamp', '2025-01-01T00:00:00'))
+                        age = datetime.now() - timestamp
+                        age_str = f"{int(age.total_seconds() / 3600)}h {int((age.total_seconds() % 3600) / 60)}m ago"
+                        print(f"  - {symbol}: {data['confidence']:.2f} (last updated: {timestamp.strftime('%Y-%m-%d %H:%M:%S')} - {age_str})")
+                    except:
+                        print(f"  - {symbol}: {data['confidence']:.2f} (last updated: unknown)")
+        else:
+            print("No existing confidence levels found in status file.")
     
     # Combine stored and log confidence data, preferring newer data
     all_confidence = {}
