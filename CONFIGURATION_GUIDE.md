@@ -32,6 +32,8 @@ Parameter spesifik untuk strategi trading yang digunakan (saat ini Bollinger + S
 - **`stoch_smooth_d`**: Periode %D smoothing Stochastic RSI.
 - **`stoch_oversold`**: Level oversold Stochastic RSI.
 - **`stoch_overbought`**: Level overbought Stochastic RSI.
+- **`min_confidence`**: Nilai minimum confidence level untuk melakukan trading (0.0-1.0). Default: 0.7 (70%).
+- **`timeframe_weights`**: Bobot untuk setiap timeframe dalam analisis multi-timeframe. Contoh: `{"15m": 0.1, "1h": 0.3, "4h": 0.3, "1d": 0.3}`.
 
 ### c. `TRADING_CONFIG` (Dict)
 Parameter umum terkait eksekusi trading dan manajemen risiko.
@@ -90,7 +92,40 @@ File ini digunakan untuk menyimpan kredensial sensitif seperti API key dan token
 
 ---
 
+## 3. Monitoring Tools
+
+Bot ini dilengkapi dengan beberapa tools untuk monitoring performa dan status trading:
+
+### a. `status_check.py`
+Script untuk memeriksa status bot dan posisi aktif.
+- Menampilkan balance, posisi aktif, dan performa trading
+- Memperbarui harga terkini untuk posisi aktif
+- Mengekstrak confidence level dari log trading
+- Menampilkan confidence level untuk setiap pasangan trading
+
+### b. `confidence_check.py`
+Script khusus untuk menganalisis confidence level sinyal trading.
+- **Parameter:**
+  - `-t, --time`: Jumlah jam log yang dianalisis (default: 1)
+  - `-d, --detailed`: Menampilkan kondisi detail untuk setiap timeframe
+  - `-n, --no-update`: Tidak memperbarui file status
+- **Output:**
+  - Tabel confidence level untuk semua pasangan trading
+  - Perbandingan dengan threshold confidence dari konfigurasi
+  - Kondisi detail yang terpenuhi/tidak terpenuhi (dengan flag `-d`)
+
+### c. Status Files
+Bot menyimpan status dalam beberapa file JSON:
+- **`status/bot_status.json`**: Status umum bot dan performa
+- **`status/active_trades.json`**: Posisi trading yang aktif
+- **`status/completed_trades.json`**: Riwayat trading yang selesai
+- **`status/confidence_levels.json`**: Confidence level terbaru untuk setiap pasangan
+
+---
+
 **Tips:**
 - Jangan commit file `.env` ke repository Git. Gunakan `.gitignore`.
 - Selalu sesuaikan parameter di `config/settings.py` dengan profil risiko dan modal Anda.
+- Gunakan `confidence_check.py -d` untuk memahami mengapa bot tidak melakukan trading.
+- Turunkan nilai `min_confidence` jika ingin bot lebih agresif dalam trading.
 - Lihat `README.md` untuk gambaran umum bot dan cara menjalankannya.
