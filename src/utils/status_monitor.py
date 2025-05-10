@@ -107,6 +107,62 @@ class BotStatusMonitor:
             error_msg = "Unexpected error updating bot status"
             logger.error(error_msg, exc_info=True)
             raise FileOperationError(error_msg, e, {"status_file": str(self.status_file)}) 
+            
+    @log_call()
+    def update_confidence_levels(self, confidence_data: Dict[str, Any]):
+        """Update confidence levels for trading pairs.
+        
+        Args:
+            confidence_data: Dictionary with symbol as key and confidence info as value
+                Example: {"BTCUSDT": {"confidence": 0.65, "timestamp": "2025-05-10T12:00:00"}}
+        """
+        confidence_file = self.status_dir_path / "confidence_levels.json"
+        
+        try:
+            # Load existing data if available
+            existing_data = {}
+            if confidence_file.exists():
+                try:
+                    with open(confidence_file, "r") as f:
+                        existing_data = json.load(f)
+                except json.JSONDecodeError:
+                    logger.warning("Could not decode existing confidence file, creating new one")
+            
+            # Update with new data
+            data_to_save = existing_data.copy()
+            data_to_save.update(confidence_data)
+            data_to_save["last_updated"] = datetime.now().isoformat()
+            
+            # Write to file
+            self._atomic_write_json(confidence_file, data_to_save)
+            logger.info("Confidence levels updated successfully")
+        except Exception as e:
+            error_msg = "Error updating confidence levels"
+            logger.error(error_msg, exc_info=True)
+            raise FileOperationError(error_msg, e, {"confidence_file": str(confidence_file)})
+    
+    @log_call()
+    def get_confidence_levels(self) -> Dict[str, Any]:
+        """Get current confidence levels for all trading pairs.
+        
+        Returns:
+            Dictionary with confidence levels and timestamps
+        """
+        confidence_file = self.status_dir_path / "confidence_levels.json"
+        
+        try:
+            if not confidence_file.exists():
+                logger.debug("No confidence levels file found")
+                return {}
+                
+            with open(confidence_file, "r") as f:
+                data = json.load(f)
+                logger.debug("Loaded confidence levels successfully")
+                return data
+        except Exception as e:
+            error_msg = "Error reading confidence levels"
+            logger.error(error_msg, exc_info=True)
+            return {}
 
     @log_call()
     def update_trades(self, trades: List[Dict[str, Any]]):
@@ -354,12 +410,28 @@ class BotStatusMonitor:
                 else:
                     msg += f"Current: {current_price}\n"
                 msg += f"P/L: {trade.get('pnl', 0):.2f}%\n"
+                
+                # Add confidence if available
+                if 'confidence' in trade:
+                    msg += f"Confidence: {trade.get('confidence', 0):.2f}\n"
 
             perf = status.get("performance", {})
             msg += "\n📈 Performance (24h):\n"
             msg += f"Trades: {perf.get('total_trades', 0)}\n"
             msg += f"Win Rate: {perf.get('win_rate', 0):.1f}%\n"
             msg += f"Profit: {perf.get('total_profit', 0):.2f}%\n"
+            
+            # Add current confidence levels if available
+            try:
+                confidence_data = self.get_confidence_levels()
+                if confidence_data and any(k != "last_updated" for k in confidence_data.keys()):
+                    msg += "\n🎯 Current Confidence Levels:\n"
+                    for symbol, data in confidence_data.items():
+                        if symbol != "last_updated" and isinstance(data, dict) and "confidence" in data:
+                            msg += f"{symbol}: {data['confidence']:.2f}\n"
+            except Exception as e:
+                logger.error(f"Error adding confidence levels to status: {str(e)}")
+                # Continue without confidence levels
 
             logger.debug(
                 "Status message formatted successfully",
