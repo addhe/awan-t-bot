@@ -227,28 +227,39 @@ class BollStochStrategy:
                 "stoch_crossunder": stoch_k < stoch_d
             }
 
-            # Check if all buy conditions are met
-            if all(buy_conditions.values()):
+            # Check if at least 3 of 4 buy conditions are met (more flexible approach)
+            buy_conditions_met = sum(buy_conditions.values())
+            sell_conditions_met = sum(sell_conditions.values())
+            
+            if buy_conditions_met >= 3:  # At least 3 of 4 conditions
                 tf_weight = self._get_timeframe_weight(tf)
-                signals.append(("buy", tf_weight))
+                # Adjust weight based on how many conditions are met
+                adjusted_weight = tf_weight * (buy_conditions_met / 4)
+                signals.append(("buy", adjusted_weight))
                 logger.info(
-                    f"Buy signal detected in {tf} timeframe",
+                    f"Buy signal detected in {tf} timeframe with {buy_conditions_met}/4 conditions",
                     timeframe=tf,
-                    weight=tf_weight,
+                    weight=adjusted_weight,
+                    original_weight=tf_weight,
+                    conditions_met=buy_conditions_met,
                     conditions=buy_conditions,
                     price=current_price,
                     bb_lower=bb_lower,
                     stoch_k=stoch_k,
                     stoch_d=stoch_d
                 )
-            # Check if all sell conditions are met
-            elif all(sell_conditions.values()):
+            # Check if at least 3 of 4 sell conditions are met (more flexible approach)
+            elif sell_conditions_met >= 3:  # At least 3 of 4 conditions
                 tf_weight = self._get_timeframe_weight(tf)
-                signals.append(("sell", tf_weight))
+                # Adjust weight based on how many conditions are met
+                adjusted_weight = tf_weight * (sell_conditions_met / 4)
+                signals.append(("sell", adjusted_weight))
                 logger.info(
-                    f"Sell signal detected in {tf} timeframe",
+                    f"Sell signal detected in {tf} timeframe with {sell_conditions_met}/4 conditions",
                     timeframe=tf,
-                    weight=tf_weight,
+                    weight=adjusted_weight,
+                    original_weight=tf_weight,
+                    conditions_met=sell_conditions_met,
                     conditions=sell_conditions,
                     price=current_price,
                     bb_upper=bb_upper,
@@ -258,17 +269,21 @@ class BollStochStrategy:
             else:
                 # Log which conditions were not met for debugging
                 if any(buy_conditions.values()):
+                    met_buy = {k: v for k, v in buy_conditions.items() if v}
                     failed_buy = {k: v for k, v in buy_conditions.items() if not v}
                     logger.debug(
-                        f"Some buy conditions not met in {tf}",
+                        f"Insufficient buy conditions in {tf} ({sum(buy_conditions.values())}/4 met)",
                         timeframe=tf,
+                        met_conditions=met_buy,
                         failed_conditions=failed_buy
                     )
                 if any(sell_conditions.values()):
+                    met_sell = {k: v for k, v in sell_conditions.items() if v}
                     failed_sell = {k: v for k, v in sell_conditions.items() if not v}
                     logger.debug(
-                        f"Some sell conditions not met in {tf}",
+                        f"Insufficient sell conditions in {tf} ({sum(sell_conditions.values())}/4 met)",
                         timeframe=tf,
+                        met_conditions=met_sell,
                         failed_conditions=failed_sell
                     )
 

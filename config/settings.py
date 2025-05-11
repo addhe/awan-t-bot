@@ -34,6 +34,7 @@ STRATEGY_CONFIG = {
     "stoch_smooth_d": 3,
     "stoch_oversold": 20,
     "stoch_overbought": 80,
+    "min_confidence": 0.6,  # Minimum confidence score to enter a trade
 }
 
 # Trading configuration
