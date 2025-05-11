@@ -21,6 +21,8 @@ class BollStochStrategy:
         stoch_smooth_d: int = 3,
         stoch_oversold: int = 20,
         stoch_overbought: int = 80,
+        min_confidence: float = 0.6,
+        **kwargs,  # Accept any additional parameters
     ):
         # Map config names to internal variable names
         self.boll_window = boll_length
