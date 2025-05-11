@@ -347,7 +347,7 @@ Factors affecting trading frequency:
 3. **Trading Pairs**: Limited to configured pairs (default: BTC/USDT, ETH/USDT, SOL/USDT)
 
 To increase trading frequency, you can:
-- Lower the confidence threshold in `config/strategy_config.py` (`min_confidence: 0.6`)
+- Lower the confidence threshold in `config/settings.py` (`min_confidence: 0.6`)
 - Add more trading pairs
 - Adjust timeframe weights to favor shorter timeframes
 
