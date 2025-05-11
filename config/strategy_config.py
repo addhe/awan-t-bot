@@ -16,7 +16,6 @@ STRATEGY_CONFIG = {
     "stoch_smooth_k": 3,
     "stoch_smooth_d": 3,
     # Entry conditions
-    "min_confidence": 0.6,  # Minimum confidence score to enter a trade
     "max_spread": 0.002,  # Maximum allowed spread (0.2%)
     # Position sizing
     "position_size": 0.02,  # 2% of account balance per trade
