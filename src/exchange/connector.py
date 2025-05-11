@@ -211,11 +211,10 @@ class ExchangeConnector:
             Dictionary of asset balances
         """
         try:
-            # Coba gunakan _safe_async_call
             account_info = await self._safe_async_call('fetch_balance')
         except Exception as e:
-            logger.error(f"Error in get_all_balances with _safe_async_call: {e}")
-            # Fallback ke panggilan langsung
+            logger.error(f"Error in fetch_balance: {e}")
+            # Fallback to direct call
             try:
                 logger.debug(f"Fallback to direct call for fetch_balance")
                 account_info = self.exchange.fetch_balance()
@@ -236,6 +235,34 @@ class ExchangeConnector:
             assets=list(balances.keys()),
         )
         return balances
+        
+    @rate_limited_api()
+    @handle_exchange_errors(notify=False)
+    @retry_with_backoff(max_retries=3)
+    async def get_available_balance(self, asset: str) -> float:
+        """Get available balance for a specific asset
+        
+        Args:
+            asset: Asset symbol (e.g., 'BTC', 'ETH')
+            
+        Returns:
+            Available balance for the asset or 0 if not found/error
+        """
+        try:
+            balances = await self.get_all_balances()
+            available = balances.get(asset, 0)
+            
+            logger.info(
+                f"Available balance for {asset}: {available}",
+                asset=asset,
+                available=available
+            )
+            
+            return available
+        except Exception as e:
+            logger.error(f"Failed to get available balance for {asset}: {e}", 
+                      asset=asset, exc_info=True)
+            return 0
 
     @rate_limited_api()
     @handle_exchange_errors(notify=True)

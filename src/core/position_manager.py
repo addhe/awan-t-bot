@@ -204,28 +204,55 @@ class PositionManager:
             balances = await self.exchange.get_all_balances()
             available_balance = balances.get(base_currency, 0)
             
+            # Get current price to estimate value
+            current_price = 0
+            try:
+                current_price = await self.exchange.get_current_price(symbol)
+            except Exception as e:
+                logger.warning(f"Could not get current price for {symbol}: {str(e)}")
+            
+            # More strict check with detailed logging
             if available_balance < quantity * 0.99:  # Allow for small rounding differences (99% of expected)
-                logger.warning(
-                    f"Insufficient balance to close position for {symbol}",
+                logger.error(
+                    f"❌ Insufficient balance to close position for {symbol}",
                     symbol=symbol,
                     required_quantity=quantity,
                     available_balance=available_balance,
-                    base_currency=base_currency
+                    base_currency=base_currency,
+                    estimated_value=available_balance * current_price if current_price > 0 else 0
                 )
                 
-                # Remove from active trades since we can't actually sell it
-                del self.active_trades[symbol]
+                # Send notification about the issue
+                from src.utils.telegram import send_telegram_message
+                await send_telegram_message(
+                    f"🔴 Cannot close {symbol} position due to insufficient balance.\n"
+                    f"Required: {quantity} {base_currency}\n"
+                    f"Available: {available_balance} {base_currency}\n"
+                    f"Please close position manually or add funds."
+                )
+                
+                # Keep the position in active_trades but mark it as problematic
+                # This allows the system to retry later if balance becomes available
+                self.active_trades[symbol]["close_error"] = "insufficient_balance"
+                self.active_trades[symbol]["close_attempts"] = self.active_trades[symbol].get("close_attempts", 0) + 1
+                
+                # If too many attempts, remove from active trades
+                if self.active_trades[symbol].get("close_attempts", 0) > 5:
+                    logger.warning(f"Too many failed attempts to close {symbol}, removing from active trades")
+                    del self.active_trades[symbol]
+                
                 await self._update_trades_status()
                 
-                # Return a special result indicating position was removed but not sold
+                # Return a special result indicating position was not closed due to insufficient balance
                 return {
                     "symbol": symbol,
                     "entry_price": entry_price,
                     "exit_price": 0,  # No actual exit since we couldn't sell
                     "quantity": 0,    # No quantity sold
                     "profit": 0,      # Can't calculate profit
-                    "close_reason": f"removed_insufficient_balance",
-                    "order_id": None
+                    "close_reason": "insufficient_balance",
+                    "order_id": None,
+                    "retry": True     # Indicate that we should retry later
                 }
 
         logger.info(
