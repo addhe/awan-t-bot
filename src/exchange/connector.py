@@ -107,6 +107,12 @@ class ExchangeConnector:
             DataFrame with OHLCV data or empty DataFrame on failure.
         """
         # Timeouts are now set during initialization
+        logger.info(
+            f"Requesting OHLCV data with explicit limit parameter",
+            symbol=symbol,
+            timeframe=timeframe,
+            requested_limit=limit
+        )
         try:
             ohlcv = await self._safe_async_call('fetch_ohlcv', symbol, timeframe, limit=limit)
         except Exception as e:
@@ -133,6 +139,16 @@ class ExchangeConnector:
         )
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         df.set_index("timestamp", inplace=True)
+
+        # Log dengan level INFO untuk memastikan terlihat di log
+        logger.info(
+            f"Fetched OHLCV candles: requested={limit}, received={len(df)}",
+            symbol=symbol,
+            timeframe=timeframe,
+            requested_limit=limit,
+            received_candles=len(df),
+            received_vs_requested=f"{len(df)}/{limit}"
+        )
 
         logger.debug(
             f"Fetched {len(df)} OHLCV candles for {symbol}",
