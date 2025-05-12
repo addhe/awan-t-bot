@@ -441,7 +441,7 @@ class PositionManager:
                 # Get current market data (Consider using a more relevant timeframe?)
                 # TODO: Make timeframe configurable or use shortest from pair_config
                 df = await self.exchange.fetch_ohlcv(
-                    symbol, timeframe="15m", limit=10
+                    symbol, timeframe="15m", limit=60
                 )
                 if df.empty:
                     logger.warning(
@@ -514,6 +514,20 @@ class PositionManager:
                     )
                     # Update the trade with the calculated take_profit_price
                     trade["take_profit"] = take_profit_price
+
+                # If stop_loss is not set or 0, calculate it based on config
+                if trade.get("stop_loss", 0) == 0 and entry_price > 0:
+                    stop_loss_pct = self.config.get("stop_loss_pct", 0.02)  # Default 2%
+                    stop_loss_price = entry_price * (1 - stop_loss_pct)
+                    logger.info(
+                        f"Setting missing stop_loss_price for {symbol}",
+                        symbol=symbol,
+                        entry_price=entry_price,
+                        stop_loss_pct=stop_loss_pct,
+                        stop_loss_price=stop_loss_price
+                    )
+                    # Update the trade with the calculated stop_loss_price
+                    trade["stop_loss"] = stop_loss_price
 
                 # Determine trigger conditions using potentially updated SL
                 stop_loss_triggered = (
