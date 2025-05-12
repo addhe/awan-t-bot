@@ -231,7 +231,7 @@ class PositionManager:
                 )
 
                 # Send notification about the issue
-                from src.utils.telegram import send_telegram_message
+                from src.utils.telegram_utils import send_telegram_message
                 await send_telegram_message(
                     f"🔴 Cannot close {symbol} position due to insufficient balance.\n"
                     f"Required: {required_quantity} {base_currency} (includes 5% safety margin)\n"
@@ -307,7 +307,7 @@ class PositionManager:
             # Check if this is an insufficient balance error
             if "insufficient balance" in error_msg.lower():
                 # Send notification about the issue
-                from src.utils.telegram import send_telegram_message
+                from src.utils.telegram_utils import send_telegram_message
                 await send_telegram_message(
                     f"🔴 Exchange error in place_market_sell: {error_msg}\n"
                     f"Symbol: {symbol}\n"
