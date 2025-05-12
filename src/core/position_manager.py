@@ -36,25 +36,25 @@ class PositionManager:
         self.config = trading_config
         self.monitor = monitor
         self.active_trades = {}
-        
+
         # Load active trades from status file
         self._load_active_trades_from_status()
-        
+
     def _load_active_trades_from_status(self):
         """Load active trades from status file to ensure consistency"""
         try:
             # Get active trades from status monitor
             status_trades = self.monitor.get_active_trades()
-            
+
             if status_trades:
                 logger.info(f"Loading {len(status_trades)} active trades from status file")
-                
+
                 # Convert to the format expected by position manager
                 for trade in status_trades:
                     symbol = trade.get("symbol")
                     if not symbol:
                         continue
-                        
+
                     self.active_trades[symbol] = {
                         "entry_price": trade.get("entry_price", 0),
                         "quantity": trade.get("quantity", 0),
@@ -64,7 +64,7 @@ class PositionManager:
                         "confidence": trade.get("confidence", 0.5),
                         "order_id": trade.get("order_id", "")
                     }
-                    
+
                 logger.info(f"Loaded {len(self.active_trades)} active trades: {list(self.active_trades.keys())}")
         except Exception as e:
             logger.error(f"Error loading active trades from status: {e}", exc_info=True)
@@ -191,58 +191,69 @@ class PositionManager:
         trade = self.active_trades[symbol]
         entry_price = trade["entry_price"]  # Actual entry price
         quantity = trade["quantity"]  # Actual filled quantity
-        
+
         # Extract base currency from symbol
         base_currency = None
         if symbol.endswith('USDT'):
             base_currency = symbol[:-4]  # Remove 'USDT'
         elif '/' in symbol:
             base_currency = symbol.split('/')[0]  # Split at '/' and take first part
-        
+
         # Check if we have enough balance before attempting to sell
         if base_currency:
-            balances = await self.exchange.get_all_balances()
-            available_balance = balances.get(base_currency, 0)
-            
+            # Use the dedicated method to get available balance for this specific asset
+            try:
+                available_balance = await self.exchange.get_available_balance(base_currency)
+            except Exception as e:
+                logger.error(f"Error getting available balance for {base_currency}: {str(e)}")
+                available_balance = 0
+
             # Get current price to estimate value
             current_price = 0
             try:
                 current_price = await self.exchange.get_current_price(symbol)
             except Exception as e:
                 logger.warning(f"Could not get current price for {symbol}: {str(e)}")
-            
-            # More strict check with detailed logging
-            if available_balance < quantity * 0.99:  # Allow for small rounding differences (99% of expected)
+
+            # More strict check with detailed logging and increased safety margin
+            required_quantity = quantity * 1.05  # Add 5% margin for fees and price fluctuations
+            if available_balance < required_quantity:
                 logger.error(
                     f"❌ Insufficient balance to close position for {symbol}",
                     symbol=symbol,
-                    required_quantity=quantity,
+                    required_quantity=required_quantity,
+                    actual_quantity=quantity,
                     available_balance=available_balance,
                     base_currency=base_currency,
-                    estimated_value=available_balance * current_price if current_price > 0 else 0
+                    current_price=current_price,
+                    estimated_value=available_balance * current_price if current_price > 0 else 0,
+                    margin_factor=1.05  # Document the margin factor we're using
                 )
-                
+
                 # Send notification about the issue
                 from src.utils.telegram import send_telegram_message
                 await send_telegram_message(
                     f"🔴 Cannot close {symbol} position due to insufficient balance.\n"
-                    f"Required: {quantity} {base_currency}\n"
+                    f"Required: {required_quantity} {base_currency} (includes 5% safety margin)\n"
+                    f"Actual position: {quantity} {base_currency}\n"
                     f"Available: {available_balance} {base_currency}\n"
-                    f"Please close position manually or add funds."
+                    f"Current price: {current_price}\n"
+                    f"Attempt #{self.active_trades[symbol].get('close_attempts', 0) + 1}\n"
+                    f"Please close position manually or add funds to your {base_currency} balance."
                 )
-                
+
                 # Keep the position in active_trades but mark it as problematic
                 # This allows the system to retry later if balance becomes available
                 self.active_trades[symbol]["close_error"] = "insufficient_balance"
                 self.active_trades[symbol]["close_attempts"] = self.active_trades[symbol].get("close_attempts", 0) + 1
-                
+
                 # If too many attempts, remove from active trades
                 if self.active_trades[symbol].get("close_attempts", 0) > 5:
                     logger.warning(f"Too many failed attempts to close {symbol}, removing from active trades")
                     del self.active_trades[symbol]
-                
+
                 await self._update_trades_status()
-                
+
                 # Return a special result indicating position was not closed due to insufficient balance
                 return {
                     "symbol": symbol,
@@ -263,8 +274,72 @@ class PositionManager:
             close_reason=close_reason,
         )
 
+        # Double-check balance right before placing order
+        if base_currency:
+            try:
+                final_check_balance = await self.exchange.get_available_balance(base_currency)
+                if final_check_balance < quantity:
+                    logger.error(
+                        f"Final balance check failed before placing sell order for {symbol}",
+                        symbol=symbol,
+                        required_quantity=quantity,
+                        available_balance=final_check_balance,
+                        base_currency=base_currency
+                    )
+                    # Add to error count but continue with the attempt
+                    self.active_trades[symbol]["close_attempts"] = self.active_trades[symbol].get("close_attempts", 0) + 1
+            except Exception as e:
+                logger.warning(f"Error in final balance check for {symbol}: {str(e)}")
+
         # Place market sell order - gets actual execution details
-        order_result = await self.exchange.place_market_sell(symbol, quantity)
+        try:
+            order_result = await self.exchange.place_market_sell(symbol, quantity)
+        except Exception as e:
+            # Handle exchange errors specifically
+            error_msg = str(e)
+            logger.error(
+                f"Error placing market sell order for {symbol}: {error_msg}",
+                symbol=symbol,
+                quantity=quantity,
+                error=error_msg
+            )
+
+            # Check if this is an insufficient balance error
+            if "insufficient balance" in error_msg.lower():
+                # Send notification about the issue
+                from src.utils.telegram import send_telegram_message
+                await send_telegram_message(
+                    f"🔴 Exchange error in place_market_sell: {error_msg}\n"
+                    f"Symbol: {symbol}\n"
+                    f"Quantity: {quantity} {base_currency}\n"
+                    f"Please check your exchange account."
+                )
+
+                # Mark position with error
+                self.active_trades[symbol]["close_error"] = "exchange_error"
+                self.active_trades[symbol]["close_attempts"] = self.active_trades[symbol].get("close_attempts", 0) + 1
+
+                # If too many attempts, remove from active trades
+                if self.active_trades[symbol].get("close_attempts", 0) > 5:
+                    logger.warning(f"Too many failed attempts to close {symbol}, removing from active trades")
+                    del self.active_trades[symbol]
+
+                await self._update_trades_status()
+
+                # Return a special result indicating position was not closed due to exchange error
+                return {
+                    "symbol": symbol,
+                    "entry_price": entry_price,
+                    "exit_price": 0,
+                    "quantity": 0,
+                    "profit": 0,
+                    "close_reason": "exchange_error",
+                    "order_id": None,
+                    "retry": True
+                }
+
+            # For other errors, just return empty dict to indicate failure
+            return {}
 
         # Validate execution details
         actual_exit_price = order_result.get("average_price")
@@ -390,7 +465,7 @@ class PositionManager:
                     if current_price >= activation_price:
                         # Calculate potential new stop loss based on current price
                         potential_new_sl = current_price * (1 - tsl_pct)
-                        
+
                         # Update SL only if the new potential SL is higher than the current one
                         if potential_new_sl > current_stop_loss:
                             new_stop_loss = potential_new_sl
@@ -464,7 +539,7 @@ class PositionManager:
 
                     # If SL triggered after trailing stop updated it, maybe log it specially?
                     if stop_loss_triggered and trailing_stop_updated:
-                        logger.info(f"Closing {symbol} due to triggered Trailing Stop Loss at {stop_loss_price}", 
+                        logger.info(f"Closing {symbol} due to triggered Trailing Stop Loss at {stop_loss_price}",
                                     symbol=symbol, stop_loss_price=stop_loss_price)
                         # close_reason = "trailing_stop_loss" # Optional more specific reason
 
