@@ -225,7 +225,30 @@ class TradingBot:
                 logger.error(f"No OHLCV data available for {symbol}")
                 return False
                 
-            signal, confidence, indicators = self.strategy.analyze_signals(ohlcv_data)
+            # Hitung indikator teknikal untuk setiap timeframe sebelum analisis
+            ohlcv_data_with_indicators = {}
+            for tf, df in ohlcv_data.items():
+                try:
+                    # Hitung indikator menggunakan metode calculate_indicators
+                    df_with_indicators = self.strategy.calculate_indicators(df, symbol, tf)
+                    if df_with_indicators is not None and not df_with_indicators.empty:
+                        # Pastikan semua indikator yang diperlukan ada
+                        required_indicators = ['close', 'bb_upper', 'bb_lower', 'bb_middle', 'ema', 'stoch_k', 'stoch_d']
+                        if all(indicator in df_with_indicators.columns for indicator in required_indicators):
+                            ohlcv_data_with_indicators[tf] = df_with_indicators
+                            logger.debug(f"Added indicators for {symbol} {tf}")
+                        else:
+                            missing = [ind for ind in required_indicators if ind not in df_with_indicators.columns]
+                            logger.error(f"Missing indicators for {symbol} {tf}: {missing}")
+                except Exception as e:
+                    logger.error(f"Error calculating indicators for {symbol} {tf}: {e}")
+            
+            # Jika tidak ada data dengan indikator, keluar
+            if not ohlcv_data_with_indicators:
+                logger.error(f"Failed to calculate indicators for {symbol} from any timeframe")
+                return False
+                
+            signal, confidence, indicators = self.strategy.analyze_signals(ohlcv_data_with_indicators)
 
             # Save signal to Redis
             if self.redis and self.redis.is_connected():
