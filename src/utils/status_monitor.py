@@ -207,6 +207,36 @@ class BotStatusMonitor:
             logger.error(error_msg, exc_info=True)
             # Continue without raising to avoid breaking the main loop
     
+    @log_call()
+    def update_status_metrics(self, metrics: Dict[str, Any]):
+        """Update bot status metrics.
+        
+        Args:
+            metrics: Dictionary with status metrics like uptime, active_trades, etc.
+        """
+        try:
+            # Get current status or initialize new one
+            current_status = self.get_bot_status() or {}
+            
+            # Update metrics in status
+            if "metrics" not in current_status:
+                current_status["metrics"] = {}
+                
+            # Update with new metrics
+            current_status["metrics"].update(metrics)
+            
+            # Update last_updated timestamp
+            current_status["last_updated"] = datetime.now().isoformat()
+            
+            # Save updated status
+            self.update_bot_status(current_status)
+            
+            logger.info("Updated bot status metrics", metrics_count=len(metrics))
+        except Exception as e:
+            error_msg = "Error in update_status_metrics"
+            logger.error(error_msg, exc_info=True)
+            # Continue without raising to avoid breaking the main loop
+    
     @retry_with_backoff(max_retries=3)
     @log_call()
     def get_bot_status(self) -> Dict[str, Any]:
