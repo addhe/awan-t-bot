@@ -44,9 +44,15 @@ async def update_trade_prices():
         logger.info(f"Found {len(active_trades)} active trades")
         
         # Update current prices and PnL for active trades
-        updated_trades = {}
-        for symbol, trade_data in active_trades.items():
+        updated_trades = []
+        for trade_data in active_trades:
             try:
+                # Get symbol from trade data
+                symbol = trade_data.get('symbol')
+                if not symbol:
+                    logger.error(f"Missing symbol in trade data: {trade_data}")
+                    continue
+                    
                 # Get current price from exchange
                 current_price = await exchange.get_current_price(symbol)
                 entry_price = float(trade_data.get('entry_price', 0))
@@ -61,7 +67,7 @@ async def update_trade_prices():
                 updated_trade = trade_data.copy()
                 updated_trade['current_price'] = current_price
                 updated_trade['pnl'] = pnl
-                updated_trades[symbol] = updated_trade
+                updated_trades.append(updated_trade)
                 
                 # Also save the trade info to Redis for quick access
                 try:
@@ -82,7 +88,7 @@ async def update_trade_prices():
                     
             except Exception as e:
                 logger.error(f"Error updating {symbol}: {e}")
-                updated_trades[symbol] = trade_data  # Keep original data
+                updated_trades.append(trade_data)  # Keep original data
         
         # Update active trades in status monitor
         if updated_trades:
@@ -91,10 +97,7 @@ async def update_trade_prices():
             
             # Also save all active trades to Redis
             try:
-                redis_manager.redis.set("active_trades", json.dumps([
-                    {**trade_data, "symbol": symbol} 
-                    for symbol, trade_data in updated_trades.items()
-                ]))
+                redis_manager.redis.set("active_trades", json.dumps(updated_trades))
                 redis_manager.redis.expire("active_trades", 60 * 60 * 24)  # 1 day expiration
                 logger.info(f"Saved {len(updated_trades)} active trades to Redis")
             except Exception as e:
