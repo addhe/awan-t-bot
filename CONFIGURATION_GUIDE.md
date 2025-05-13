@@ -49,6 +49,15 @@ Konfigurasi terkait sistem dan koneksi.
 - **`connection_timeout`**: Waktu timeout koneksi (detik).
 - **`read_timeout`**: Waktu timeout membaca respons (detik).
 - **`retry_count`**: Jumlah percobaan ulang jika terjadi error koneksi/request.
+- **`redis_host`**: Host Redis server (default: "redis").
+- **`redis_port`**: Port Redis server (default: 6379).
+- **`redis_password`**: Password Redis server (diambil dari environment variable).
+- **`redis_db`**: Nomor database Redis (default: 0).
+- **`postgres_host`**: Host PostgreSQL server (default: "postgres").
+- **`postgres_port`**: Port PostgreSQL server (default: 5432).
+- **`postgres_user`**: Username PostgreSQL (diambil dari environment variable).
+- **`postgres_password`**: Password PostgreSQL (diambil dari environment variable).
+- **`postgres_db`**: Nama database PostgreSQL (default: "tradingdb").
 - **`retry_delay`**: Jeda waktu antar percobaan ulang (detik).
 - **`rate_limit_buffer`**: Persentase buffer untuk rate limit API (misal: 0.8 = gunakan 80% dari limit).
 - **`main_loop_interval_seconds`**: The target duration (in seconds) for each main processing cycle. The bot will sleep at the end of each cycle to meet this target duration.
@@ -80,15 +89,64 @@ Konfigurasi spesifik untuk koneksi ke exchange.
 
 ---
 
-## 2. .env File
+## 2. `.env`
 
-File ini digunakan untuk menyimpan kredensial sensitif seperti API key dan token Telegram agar tidak tersimpan langsung di kode. Pastikan file `.env` ada di root project dan berisi variabel berikut:
+File ini berisi kredensial dan API keys yang tidak boleh dimasukkan ke dalam version control.
 
-- **`BINANCE_API_KEY`**: API key Binance Anda.
-- **`BINANCE_API_SECRET`**: API secret Binance Anda.
-- **`TELEGRAM_BOT_TOKEN`**: Token bot Telegram Anda.
-- **`TELEGRAM_CHAT_ID`**: ID chat Telegram Anda.
-- **`USE_TESTNET`**: Set ke `True` untuk menggunakan Binance Testnet, atau `False` (atau biarkan kosong) untuk live trading.
+- **`EXCHANGE_API_KEY`**: API key untuk exchange.
+- **`EXCHANGE_API_SECRET`**: API secret untuk exchange.
+- **`TELEGRAM_BOT_TOKEN`**: Token bot Telegram untuk notifikasi.
+- **`TELEGRAM_CHAT_ID`**: ID chat Telegram untuk mengirim notifikasi.
+- **`REDIS_PASSWORD`**: Password untuk Redis server.
+- **`POSTGRES_USER`**: Username untuk PostgreSQL.
+- **`POSTGRES_PASSWORD`**: Password untuk PostgreSQL.
+- **`POSTGRES_DB`**: Nama database PostgreSQL (default: tradingdb).
+
+## 3. Docker Configuration
+
+Bot trading sekarang mendukung deployment menggunakan Docker dan Docker Compose.
+
+### a. `docker-compose.yml`
+
+File ini mengkonfigurasi tiga layanan utama:
+
+1. **trading-bot**: Container bot trading utama
+   - Build dari Dockerfile
+   - Menggunakan volume untuk menyimpan log dan data
+   - Terhubung ke Redis dan PostgreSQL
+
+2. **redis**: Container Redis untuk caching
+   - Menggunakan image Redis resmi
+   - Menggunakan konfigurasi dari `redis.conf`
+   - Data disimpan di volume `redis-data`
+   - Diproteksi dengan password
+
+3. **postgres**: Container PostgreSQL dengan TimescaleDB
+   - Menggunakan image TimescaleDB
+   - Data disimpan di volume `postgres-data`
+   - Diinisialisasi dengan script `init-postgres.sql`
+   - Diproteksi dengan username dan password
+
+### b. `redis.conf`
+
+Konfigurasi Redis untuk memastikan persistensi data:
+
+- **`appendonly yes`**: Mengaktifkan Append-Only File (AOF) untuk persistensi
+- **`appendfsync everysec`**: Menyinkronkan AOF setiap detik
+- **`save 900 1`**: Menyimpan RDB snapshot jika minimal 1 key berubah dalam 900 detik
+- **`save 300 10`**: Menyimpan RDB snapshot jika minimal 10 key berubah dalam 300 detik
+- **`save 60 10000`**: Menyimpan RDB snapshot jika minimal 10000 key berubah dalam 60 detik
+
+### c. `init-postgres.sql`
+
+Script SQL untuk menginisialisasi database PostgreSQL:
+
+- Membuat ekstensi TimescaleDB
+- Membuat tabel untuk data OHLCV
+- Membuat tabel untuk indikator
+- Membuat tabel untuk trades
+- Membuat tabel untuk signals
+- Mengubah tabel OHLCV dan indikator menjadi hypertable TimescaleDB
 
 ---
 

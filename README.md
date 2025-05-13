@@ -1,6 +1,16 @@
 # Awan Trading Bot
 
-## Latest Update (2025-05-10)
+## Latest Update (2025-05-13)
+
+Added Docker support and data persistence:
+- Implemented Docker and Docker Compose for easy deployment
+- Added Redis for caching OHLCV data and indicators
+- Integrated PostgreSQL with TimescaleDB for long-term data storage
+- Enhanced error handling for insufficient balance scenarios
+- Improved indicator calculation with better NaN handling
+- Fixed position tracking with pending_close flag
+
+## Previous Update (2025-05-10)
 
 Enhanced monitoring and position management:
 - Added confidence level monitoring system for trading signals
@@ -88,7 +98,62 @@ confidence_check.py      # Analyze and display confidence levels
 status_check.py          # Check bot status and active trades
 run.sh                   # Start the trading bot
 stop.sh                  # Stop the trading bot gracefully
+
+# Docker Support
+Dockerfile              # Container definition for the trading bot
+docker-compose.yml      # Multi-container setup (bot, Redis, PostgreSQL)
+redis.conf              # Redis configuration with persistence
+init-postgres.sql       # PostgreSQL initialization script
 ```
+
+## Docker Deployment
+
+The bot now supports containerized deployment using Docker and Docker Compose, which provides:
+- Easy deployment across different environments
+- Data persistence through Redis and PostgreSQL
+- Improved reliability and scalability
+
+### Prerequisites
+- Docker and Docker Compose installed on your system
+
+### Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/awan-t-bot.git
+cd awan-t-bot
+
+# Configure environment variables (optional)
+cp .env.example .env
+# Edit .env with your credentials
+
+# Build and start the containers
+docker-compose up -d
+
+# View logs
+docker-compose logs -f trading-bot
+```
+
+### Configuration
+
+Create a `.env` file in the project root with the following variables:
+
+```
+REDIS_PASSWORD=YourStrongRedisPassword
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=YourStrongPostgresPassword
+POSTGRES_DB=tradingdb
+```
+
+### Data Persistence
+
+The Docker setup includes:
+- **Redis** for caching OHLCV data and indicators with persistence
+- **PostgreSQL with TimescaleDB** for long-term storage of trading data
+
+Data is stored in Docker volumes:
+- `redis-data`: Redis data files (RDB and AOF)
+- `postgres-data`: PostgreSQL database files
 
 ## Installation
 

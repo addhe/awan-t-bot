@@ -14,9 +14,13 @@ awan-t-bot/
 │   ├── core/             # Core trading logic (trading bot, position management)
 │   ├── exchange/         # Exchange connectors and API integration
 │   ├── strategies/       # Trading strategies (signal generation, indicator logic)
-│   ├── utils/            # Utilities: logging, status, error handling, rate limiting
+│   ├── utils/            # Utilities: logging, status, error handling, rate limiting, Redis
 │   └── ...               # Other supporting modules
 ├── tests/                # Unit and integration tests
+├── docker-compose.yml    # Multi-container Docker configuration
+├── Dockerfile            # Container definition for the trading bot
+├── redis.conf            # Redis configuration with persistence
+├── init-postgres.sql     # PostgreSQL initialization script
 ├── requirements.txt      # Python dependencies
 └── README.md             # User documentation
 ```
@@ -48,6 +52,11 @@ awan-t-bot/
 - **`structured_logger.py`**: Structured logging for debugging and monitoring.
 - **`rate_limiter.py`**: Prevents API rate limit violations.
 - **`telegram_utils.py`**: Telegram notification integration.
+- **`redis_manager.py`**: Manages Redis connection and operations for caching OHLCV data and indicators.
+
+### g. Data Persistence
+- **Redis**: In-memory database with persistence for caching OHLCV data and indicators.
+- **PostgreSQL with TimescaleDB**: Time-series database for long-term storage of trading data, performance metrics, and historical analysis.
 
 ### g. Tests (`tests/`)
 - Unit and integration tests for core logic, strategies, and utilities.
