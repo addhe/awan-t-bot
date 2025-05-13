@@ -134,7 +134,8 @@ class RedisManager:
                 return None
             
             # Convert JSON to DataFrame
-            df = pd.read_json(json_data)
+            from io import StringIO
+            df = pd.read_json(StringIO(json_data))
             
             # Set timestamp as index
             if "timestamp" in df.columns:
@@ -224,7 +225,8 @@ class RedisManager:
                 return None
             
             # Convert JSON to DataFrame
-            df = pd.read_json(json_data)
+            from io import StringIO
+            df = pd.read_json(StringIO(json_data))
             
             # Set timestamp as index
             if "timestamp" in df.columns:
