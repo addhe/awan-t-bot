@@ -278,9 +278,7 @@ class TradingBot:
                         symbol=symbol,
                         signal=signal,
                         confidence=confidence,
-                        price=current_price,
-                        timeframes=list(ohlcv_data.keys()),
-                        indicators=indicators
+                        timeframes=list(ohlcv_data.keys())
                     )
                     logger.debug(f"Saved signal for {symbol} to Redis: {signal} with confidence {confidence:.2f}")
                 except Exception as e:
@@ -306,10 +304,9 @@ class TradingBot:
                 )
                 
                 # Calculate position size
-                position_size = self.position_manager.calculate_position_size(
-                    symbol, current_price
-                )
-                
+                position_size, _ = self.strategy.calculate_position_size(
+                        available_balance, current_price, pair_config, TRADING_CONFIG
+                    )              
                 if position_size * current_price > available_balance:
                     logger.warning(
                         f"Insufficient balance for {symbol}",
