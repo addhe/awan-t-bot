@@ -184,6 +184,29 @@ class BotStatusMonitor:
             logger.error(error_msg, exc_info=True)
             raise FileOperationError(error_msg, e, {"trades_file": str(self.trades_file)}) 
 
+    @log_call()
+    def update_active_trades(self, active_trades: Dict[str, Any]):
+        """Update active trades from position manager.
+        
+        Args:
+            active_trades: Dictionary with symbol as key and trade info as value
+        """
+        try:
+            # Convert dictionary to list format expected by update_trades
+            trades_list = []
+            for symbol, trade_data in active_trades.items():
+                trade_info = trade_data.copy()  # Make a copy to avoid modifying original
+                trade_info["symbol"] = symbol  # Add symbol to the trade info
+                trades_list.append(trade_info)
+                
+            # Call existing update_trades method
+            self.update_trades(trades_list)
+            logger.info(f"Updated {len(trades_list)} active trades via update_active_trades")
+        except Exception as e:
+            error_msg = "Error in update_active_trades"
+            logger.error(error_msg, exc_info=True)
+            # Continue without raising to avoid breaking the main loop
+    
     @retry_with_backoff(max_retries=3)
     @log_call()
     def get_bot_status(self) -> Dict[str, Any]:
