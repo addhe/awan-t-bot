@@ -35,6 +35,26 @@ logger = get_logger(__name__)
 
 
 class TradingBot:
+    def _validate_and_fix_ohlcv(self, df, symbol, timeframe, source):
+        required_columns = ['open', 'high', 'low', 'close', 'volume']
+        # Pastikan semua kolom ada
+        if not all(col in df.columns for col in required_columns):
+            missing = [col for col in required_columns if col not in df.columns]
+            logger = getattr(self, 'logger', None) or globals().get('logger')
+            if logger:
+                logger.error(
+                    f"OHLCV data missing columns from {source} for {symbol} {timeframe}: {missing}"
+                )
+            return False
+        # Optional: warning jika ada NaN di kolom utama
+        if df[required_columns].isnull().any().any():
+            logger = getattr(self, 'logger', None) or globals().get('logger')
+            if logger:
+                logger.warning(
+                    f"OHLCV data contains NaN in required columns from {source} for {symbol} {timeframe}"
+                )
+        return True
+
     """Core trading bot implementation with modular components"""
 
     def __init__(self):
