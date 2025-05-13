@@ -365,7 +365,8 @@ async def update_active_trades_prices(monitor):
             # Also save the trade info to Redis for quick access
             try:
                 redis_key = f"active_trade:{symbol}"
-                redis_manager.redis.hmset(redis_key, {
+                # Use hset instead of deprecated hmset
+                redis_manager.redis.hset(redis_key, mapping={
                     "symbol": symbol,
                     "entry_price": str(entry_price),
                     "current_price": str(current_price),
