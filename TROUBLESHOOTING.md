@@ -226,7 +226,7 @@ Untuk melihat semua komponen dan sistem bot berjalan dengan lengkap:
    ```python
    # Redis configuration
    REDIS_CONFIG = {
-       "host": os.getenv("REDIS_HOST", "localhost"),
+       "host": os.getenv("REDIS_HOST", "trading-redis"),  # Nama container Redis di docker-compose
        "port": int(os.getenv("REDIS_PORT", "6379")),
        "password": os.getenv("REDIS_PASSWORD", ""),
        "db": int(os.getenv("REDIS_DB", "0")),
@@ -239,7 +239,7 @@ Untuk melihat semua komponen dan sistem bot berjalan dengan lengkap:
    
    # PostgreSQL configuration
    POSTGRES_CONFIG = {
-       "host": os.getenv("POSTGRES_HOST", "localhost"),
+       "host": os.getenv("POSTGRES_HOST", "trading-postgres"),  # Nama container PostgreSQL di docker-compose
        "port": int(os.getenv("POSTGRES_PORT", "5432")),
        "user": os.getenv("POSTGRES_USER", "postgres"),
        "password": os.getenv("POSTGRES_PASSWORD", ""),
@@ -263,6 +263,62 @@ Untuk melihat semua komponen dan sistem bot berjalan dengan lengkap:
    Kemudian restart container bot:
    ```bash
    docker-compose restart trading-bot
+   ```
+
+7. **Koneksi Redis atau PostgreSQL Gagal**:
+   Jika Anda melihat error seperti:
+   ```
+   Failed to connect to Redis: Error -3 connecting to redis:6379. Temporary failure in name resolution.
+   ```
+   
+   Ini berarti bot tidak dapat terhubung ke container Redis atau PostgreSQL. Solusi:
+   
+   ```bash
+   # Pastikan host di settings.py menggunakan nama container yang benar
+   nano config/settings.py
+   ```
+   
+   Ubah konfigurasi host:
+   ```python
+   # Redis configuration
+   REDIS_CONFIG = {
+       "host": os.getenv("REDIS_HOST", "trading-redis"),  # Nama container Redis di docker-compose
+       # ...
+   }
+   
+   # PostgreSQL configuration
+   POSTGRES_CONFIG = {
+       "host": os.getenv("POSTGRES_HOST", "trading-postgres"),  # Nama container PostgreSQL di docker-compose
+       # ...
+   }
+   ```
+   
+   Kemudian copy file ke container dan restart:
+   ```bash
+   docker cp config/settings.py awan-trading-bot:/app/config/settings.py
+   docker-compose restart trading-bot
+   ```
+
+8. **Module Not Found Error**:
+   Jika Anda melihat error seperti:
+   ```
+   ModuleNotFoundError: No module named 'psycopg2'
+   ModuleNotFoundError: No module named 'redis'
+   ```
+   
+   Ini berarti dependensi yang diperlukan belum diinstal di container. Solusi:
+   
+   ```bash
+   # Tambahkan dependensi ke requirements.txt
+   echo "psycopg2-binary>=2.9.3" >> requirements.txt
+   echo "redis>=4.3.4" >> requirements.txt
+   
+   # Instal dependensi di dalam container
+   docker exec -it awan-trading-bot pip install psycopg2-binary redis
+   
+   # Atau rebuild container
+   docker-compose build
+   docker-compose up -d
    ```
 
 ### e. Catatan Penting
