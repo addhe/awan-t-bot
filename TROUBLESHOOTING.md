@@ -15,8 +15,8 @@ Panduan mengatasi masalah umum pada trading bot.
 - Solusi: Cek file .env, cek saldo di exchange, cek konfigurasi di settings.py.
 
 ### c. Tidak ada notifikasi Telegram
-- Penyebab: Token/chat_id salah, bot belum start, Telegram down.
-- Solusi: Cek .env, test manual kirim pesan, cek log error.
+- Penyebab: Token/chat_id salah, bot belum start, Telegram down, interval update belum tercapai.
+- Solusi: Cek .env, test manual kirim pesan, cek log error, atau kirim status manual (lihat bagian 3).
 
 ### d. Bot error/crash saat runtime
 - Penyebab: Error di strategi, API limit, koneksi exchange.
@@ -28,6 +28,36 @@ Panduan mengatasi masalah umum pada trading bot.
 
 **Q: Apakah bot bisa berjalan di VPS/Cloud?**
 A: Ya, selama ada Python dan koneksi internet.
+
+**Q: Berapa interval default untuk update status Telegram?**
+A: Default adalah 5 menit (300 detik), dapat diubah di `SYSTEM_CONFIG` pada `settings.py`.
+
+**Q: Apakah data Redis dan PostgreSQL hilang saat rebuild Docker?**
+A: Tidak, data disimpan di volume Docker yang persisten dan tidak akan hilang saat rebuild.
+
+---
+
+## 3. Panduan Manual
+
+### a. Memicu Pengiriman Status ke Telegram Secara Manual
+
+Jika Anda ingin menerima update status tanpa menunggu interval default (5 menit), Anda dapat memicu pengiriman status secara manual dengan cara berikut:
+
+#### Menggunakan Python Script
+
+```bash
+# Dari dalam container Docker
+docker exec -it awan-trading-bot python -c "from src.utils.telegram_utils import send_telegram_message; from src.utils.status_monitor import BotStatusMonitor; import asyncio; asyncio.run(send_telegram_message(BotStatusMonitor().format_status_message()))"
+```
+
+#### Menggunakan status_check.py
+
+```bash
+# Dari dalam container Docker
+docker exec -it awan-trading-bot python status_check.py
+```
+
+Status check script akan memperbarui harga saat ini untuk posisi aktif dan mengirimkan laporan status ke Telegram.
 
 **Q: Bagaimana cara menambah strategi baru?**
 A: Tambahkan file di `src/strategies/`, update konfigurasi, dan pastikan strategi baru di-load oleh core bot.
