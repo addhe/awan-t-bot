@@ -386,9 +386,33 @@ class TradingBot:
                 # Make sure active trades are updated with latest prices
                 active_trades_with_prices = {}
                 for symbol, trade_data in active_trades.items():
-                    # Get the latest price from position manager
-                    current_price = trade_data.get('current_price')
                     entry_price = trade_data.get('entry_price')
+                    if not entry_price:
+                        logger.warning(f"Missing entry price for {symbol}")
+                        continue
+                        
+                    # First try to get current price from Redis
+                    current_price = None
+                    if self.redis and self.redis.is_connected():
+                        try:
+                            # Try to get from OHLCV data in Redis
+                            for timeframe in ['1m', '5m', '15m', '1h']:
+                                df = self.redis.get_ohlcv(symbol, timeframe)
+                                if df is not None and not df.empty:
+                                    current_price = float(df.iloc[-1]['close'])
+                                    logger.debug(f"Using cached price for {symbol} from Redis ({timeframe}): {current_price}")
+                                    break
+                        except Exception as e:
+                            logger.error(f"Error getting price from Redis for {symbol}: {e}")
+                    
+                    # If not found in Redis, fetch from exchange
+                    if current_price is None:
+                        try:
+                            current_price = await self.exchange.get_current_price(symbol)
+                            logger.debug(f"Fetched price for {symbol} from exchange: {current_price}")
+                        except Exception as e:
+                            logger.error(f"Error fetching price for {symbol} from exchange: {e}")
+                            current_price = trade_data.get('current_price')  # Fallback to existing price
                     
                     # Calculate PnL if we have both prices
                     pnl = 0.0
@@ -404,6 +428,19 @@ class TradingBot:
                         'current_price': current_price,
                         'pnl': pnl
                     }
+                    
+                    # Also save to Redis for quick access
+                    if self.redis and self.redis.is_connected() and current_price:
+                        try:
+                            redis_key = f"active_trade:{symbol}"
+                            self.redis.redis.hset(redis_key, mapping={
+                                "current_price": str(current_price),
+                                "pnl": str(pnl),
+                                "updated_at": datetime.now().isoformat()
+                            })
+                            self.redis.redis.expire(redis_key, 60 * 60 * 24)  # 1 day expiration
+                        except Exception as e:
+                            logger.error(f"Error saving trade price to Redis for {symbol}: {e}")
                 
                 # Update active trades with latest prices
                 self.monitor.update_active_trades(active_trades_with_prices)
