@@ -162,7 +162,23 @@ class BotStatusMonitor:
         except Exception as e:
             error_msg = "Error reading confidence levels"
             logger.error(error_msg, exc_info=True)
-            return {}
+            return []
+            
+    @retry_with_backoff(max_retries=3)
+    @log_call()
+    def get_closed_trades(self, since=None) -> List[Dict[str, Any]]:
+        """Get closed trades (alias for get_completed_trades)
+        
+        This method is an alias for get_completed_trades to maintain
+        compatibility with DataSyncManager
+        
+        Args:
+            since: Optional datetime to filter trades
+            
+        Returns:
+            List of closed trades
+        """
+        return self.get_completed_trades(since)
 
     @log_call()
     def update_trades(self, trades: List[Dict[str, Any]]):
@@ -314,31 +330,50 @@ class BotStatusMonitor:
                     all_trades = data.get("completed_trades", [])
                     filtered_trades = []
                     if since:
-                        for t in all_trades:
+                        # Convert since to datetime if it's a string
+                        if isinstance(since, str):
                             try:
-                                close_time_str = t.get("close_time")
-                                if close_time_str and datetime.fromisoformat(close_time_str) >= since:
-                                    filtered_trades.append(t)
-                            except (ValueError, TypeError, KeyError) as e:
+                                since = datetime.fromisoformat(since)
+                            except ValueError:
                                 logger.warning(
-                                    f"Skipping trade due to invalid or missing close_time for filtering: {e}",
-                                    trade_data=t, 
-                                    error=str(e)
+                                    f"Invalid date format for 'since': {since}, using all trades"
                                 )
-                        trades = filtered_trades
-                    else:
-                        trades = all_trades
+                                return all_trades
 
-                    logger.debug(
-                        "Retrieved completed trades successfully",
-                        trade_count=len(trades),
-                        since=since.isoformat() if since else None,
-                    )
-                    return trades
-            logger.info(
-                "No existing completed trades file found, returning empty list"
-            )
-            return []
+                        # Filter trades by date
+                        for trade in all_trades:
+                            trade_time = trade.get("exit_time") or trade.get("entry_time")
+                            if not trade_time:
+                                continue
+
+                            try:
+                                if isinstance(trade_time, str):
+                                    trade_dt = datetime.fromisoformat(trade_time)
+                                else:
+                                    trade_dt = trade_time
+
+                                if trade_dt >= since:
+                                    filtered_trades.append(trade)
+                            except ValueError:
+                                # If date parsing fails, include the trade anyway
+                                filtered_trades.append(trade)
+
+                        logger.info(
+                            f"Filtered {len(filtered_trades)} trades since {since}",
+                            original_count=len(all_trades),
+                            filtered_count=len(filtered_trades),
+                        )
+                        return filtered_trades
+                    else:
+                        # Return all trades if no since filter
+                        logger.info(f"Retrieved {len(all_trades)} completed trades")
+                        return all_trades
+            else:
+                logger.info(
+                    "No completed trades file found",
+                    file=str(self.completed_trades_file),
+                )
+                return []
         except json.JSONDecodeError as e:
             error_msg = "Error decoding completed trades JSON"
             logger.error(
@@ -352,7 +387,7 @@ class BotStatusMonitor:
                 {"completed_trades_file": self.completed_trades_file},
             )
         except Exception as e:
-            error_msg = "Error reading completed trades"
+            error_msg = "Error retrieving completed trades"
             logger.error(
                 error_msg,
                 exc_info=True,
@@ -363,6 +398,22 @@ class BotStatusMonitor:
                 e,
                 {"completed_trades_file": self.completed_trades_file},
             )
+
+    @retry_with_backoff(max_retries=3)
+    @log_call()
+    def get_closed_trades(self, since=None) -> List[Dict[str, Any]]:
+        """Get closed trades (alias for get_completed_trades)
+        
+        This method is an alias for get_completed_trades to maintain
+        compatibility with DataSyncManager
+        
+        Args:
+            since: Optional datetime to filter trades
+            
+        Returns:
+            List of closed trades
+        """
+        return self.get_completed_trades(since)
 
     @log_call()
     def save_completed_trade(self, trade: Dict[str, Any]):

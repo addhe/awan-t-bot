@@ -44,9 +44,24 @@ class DataSyncManager:
                 logger.info("No active trades found in Redis to sync")
                 return True
             
-            active_trades = json.loads(redis_trades_data)
-            if not active_trades:
-                return True
+            try:
+                active_trades = json.loads(redis_trades_data)
+                if not active_trades:
+                    return True
+                    
+                # Check if active_trades is a dictionary or a list
+                if isinstance(active_trades, dict):
+                    # Convert dictionary to list format
+                    trades_list = []
+                    for symbol, trade_data in active_trades.items():
+                        if isinstance(trade_data, dict):
+                            trade_info = trade_data.copy()  # Make a copy to avoid modifying original
+                            trade_info["symbol"] = symbol  # Add symbol to the trade info
+                            trades_list.append(trade_info)
+                    active_trades = trades_list
+            except json.JSONDecodeError:
+                logger.error(f"Error decoding active trades JSON from Redis: {redis_trades_data}")
+                return False
             
             # Get existing trades from PostgreSQL to avoid duplicates
             existing_trades = self.postgres.get_trades(status="open")
