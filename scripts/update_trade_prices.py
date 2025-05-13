@@ -25,13 +25,13 @@ from src.exchange.connector import ExchangeConnector
 from src.utils.redis_manager import RedisManager
 from src.utils.status_monitor import BotStatusMonitor
 from src.utils.telegram_utils import send_telegram_message
-from config.settings import EXCHANGE_CONFIG
+from config.settings import EXCHANGE_CONFIG, SYSTEM_CONFIG
 
 async def update_trade_prices():
     """Update current_price and pnl for active trades in Redis"""
     try:
         # Initialize components
-        exchange = ExchangeConnector(EXCHANGE_CONFIG)
+        exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
         redis_manager = RedisManager()
         status_monitor = BotStatusMonitor()
         
