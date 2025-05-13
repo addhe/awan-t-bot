@@ -464,16 +464,16 @@ class PositionManager:
             return []
 
         # Get excluded symbols from config
-        excluded_symbols = self.trading_config.get("excluded_symbols", [])
+        excluded_symbols = self.config.get("excluded_symbols", [])
 
         logger.info(f"Checking {position_count} active positions: {list(self.active_trades.keys())}")
 
         # Get trailing stop config once
-        trailing_stop_enabled = self.trading_config.get("trailing_stop_enabled", False)
-        tsl_pct = self.trading_config.get("trailing_stop_pct", 0.01)
-        tsl_activation_pct = self.trading_config.get("trailing_stop_activation_pct", 0.01)
-        disable_stop_loss = self.trading_config.get("disable_stop_loss", False)
-        min_profit_pct = self.trading_config.get("min_profit_pct", 0.03)
+        trailing_stop_enabled = self.config.get("trailing_stop_enabled", False)
+        tsl_pct = self.config.get("trailing_stop_pct", 0.01)
+        tsl_activation_pct = self.config.get("trailing_stop_activation_pct", 0.01)
+        disable_stop_loss = self.config.get("disable_stop_loss", False)
+        min_profit_pct = self.config.get("min_profit_pct", 0.03)
         
         for symbol, trade in list(self.active_trades.items()):
             if symbol in excluded_symbols:
