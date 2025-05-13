@@ -124,9 +124,18 @@ class TradingBot:
 
         # Skip if we're already in a position for this symbol
         if symbol in self.position_manager.active_trades:
-            logger.debug(
-                f"Skipping {symbol} - already in active trades", symbol=symbol
-            )
+            # Periksa apakah posisi sedang dalam proses penutupan (pending_close)
+            if self.position_manager.active_trades[symbol].get("pending_close", False):
+                logger.warning(
+                    f"Skipping {symbol} - position is pending close due to previous error",
+                    symbol=symbol,
+                    close_error=self.position_manager.active_trades[symbol].get("close_error", "unknown"),
+                    close_attempts=self.position_manager.active_trades[symbol].get("close_attempts", 0)
+                )
+            else:
+                logger.debug(
+                    f"Skipping {symbol} - already in active trades", symbol=symbol
+                )
             return False
 
         logger.info(

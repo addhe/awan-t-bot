@@ -218,53 +218,87 @@ class PositionManager:
             # More strict check with detailed logging and increased safety margin
             required_quantity = quantity * 1.05  # Add 5% margin for fees and price fluctuations
             if available_balance < required_quantity:
-                logger.error(
-                    f"❌ Insufficient balance to close position for {symbol}",
-                    symbol=symbol,
-                    required_quantity=required_quantity,
-                    actual_quantity=quantity,
-                    available_balance=available_balance,
-                    base_currency=base_currency,
-                    current_price=current_price,
-                    estimated_value=available_balance * current_price if current_price > 0 else 0,
-                    margin_factor=1.05  # Document the margin factor we're using
-                )
+                # Check if we have at least 90% of the actual quantity (without safety margin)
+                if available_balance >= quantity * 0.9:
+                    # We have enough to close most of the position, so use what we have
+                    adjusted_quantity = available_balance * 0.99  # Use 99% of available balance to be safe
+                    logger.warning(
+                        f"⚠️ Insufficient balance to close full position for {symbol}, using available balance",
+                        symbol=symbol,
+                        required_quantity=required_quantity,
+                        actual_quantity=quantity,
+                        available_balance=available_balance,
+                        adjusted_quantity=adjusted_quantity,
+                        base_currency=base_currency,
+                        current_price=current_price
+                    )
 
-                # Send notification about the issue
-                from src.utils.telegram_utils import send_telegram_message
-                await send_telegram_message(
-                    f"🔴 Cannot close {symbol} position due to insufficient balance.\n"
-                    f"Required: {required_quantity} {base_currency} (includes 5% safety margin)\n"
-                    f"Actual position: {quantity} {base_currency}\n"
-                    f"Available: {available_balance} {base_currency}\n"
-                    f"Current price: {current_price}\n"
-                    f"Attempt #{self.active_trades[symbol].get('close_attempts', 0) + 1}\n"
-                    f"Please close position manually or add funds to your {base_currency} balance."
-                )
+                    # Send notification about partial close
+                    from src.utils.telegram_utils import send_telegram_message
+                    await send_telegram_message(
+                        f"⚠️ Partial close for {symbol} position due to insufficient balance.\n"
+                        f"Required: {quantity} {base_currency}\n"
+                        f"Available: {available_balance} {base_currency}\n"
+                        f"Using: {adjusted_quantity} {base_currency} (99% of available)\n"
+                        f"Current price: {current_price}\n"
+                        f"This will close approximately {(adjusted_quantity/quantity)*100:.1f}% of your position."
+                    )
 
-                # Keep the position in active_trades but mark it as problematic
-                # This allows the system to retry later if balance becomes available
-                self.active_trades[symbol]["close_error"] = "insufficient_balance"
-                self.active_trades[symbol]["close_attempts"] = self.active_trades[symbol].get("close_attempts", 0) + 1
+                    # Update quantity to use available balance
+                    quantity = adjusted_quantity
 
-                # If too many attempts, remove from active trades
-                if self.active_trades[symbol].get("close_attempts", 0) > 5:
-                    logger.warning(f"Too many failed attempts to close {symbol}, removing from active trades")
-                    del self.active_trades[symbol]
+                    # Continue with the trade using adjusted quantity
+                else:
+                    # Not enough balance to make a meaningful close
+                    logger.error(
+                        f"❌ Insufficient balance to close position for {symbol}",
+                        symbol=symbol,
+                        required_quantity=required_quantity,
+                        actual_quantity=quantity,
+                        available_balance=available_balance,
+                        base_currency=base_currency,
+                        current_price=current_price,
+                        estimated_value=available_balance * current_price if current_price > 0 else 0,
+                        margin_factor=1.05  # Document the margin factor we're using
+                    )
 
-                await self._update_trades_status()
+                    # Send notification about the issue
+                    from src.utils.telegram_utils import send_telegram_message
+                    await send_telegram_message(
+                        f"🔴 Cannot close {symbol} position due to insufficient balance.\n"
+                        f"Required: {required_quantity} {base_currency} (includes 5% safety margin)\n"
+                        f"Actual position: {quantity} {base_currency}\n"
+                        f"Available: {available_balance} {base_currency}\n"
+                        f"Current price: {current_price}\n"
+                        f"Attempt #{self.active_trades[symbol].get('close_attempts', 0) + 1}\n"
+                        f"Please close position manually or add funds to your {base_currency} balance."
+                    )
 
-                # Return a special result indicating position was not closed due to insufficient balance
-                return {
-                    "symbol": symbol,
-                    "entry_price": entry_price,
-                    "exit_price": 0,  # No actual exit since we couldn't sell
-                    "quantity": 0,    # No quantity sold
-                    "profit": 0,      # Can't calculate profit
-                    "close_reason": "insufficient_balance",
-                    "order_id": None,
-                    "retry": True     # Indicate that we should retry later
-                }
+                    # Keep the position in active_trades but mark it as problematic
+                    # This allows the system to retry later if balance becomes available
+                    self.active_trades[symbol]["close_error"] = "insufficient_balance"
+                    self.active_trades[symbol]["close_attempts"] = self.active_trades[symbol].get("close_attempts", 0) + 1
+                    self.active_trades[symbol]["pending_close"] = True  # Add flag to prevent opening new positions
+
+                    # PENTING: Jangan hapus dari active_trades meskipun banyak upaya gagal
+                    # Ini mencegah bot membuka posisi baru saat posisi lama belum ditutup
+                    # if self.active_trades[symbol].get("close_attempts", 0) > 5:
+                    #     logger.warning(f"Too many failed attempts to close {symbol}, removing from active trades")
+                    #     del self.active_trades[symbol]
+
+                    await self._update_trades_status()
+
+                    # Return a special result indicating position was not closed due to insufficient balance
+                    return {
+                        "symbol": symbol,
+                        "entry_price": entry_price,
+                        "exit_price": 0,  # No actual exit since we couldn't sell
+                        "quantity": 0,    # No quantity sold
+                        "profit": 0,      # Can't calculate profit
+                        "close_reason": "insufficient_balance",
+                        "order_id": None,
+                        "retry": True     # Indicate that we should retry later
+                    }
 
         logger.info(
             f"Attempting to close position for {symbol}",
