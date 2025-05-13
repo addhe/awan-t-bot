@@ -183,18 +183,31 @@ class TradingBot:
             
             # If not in Redis, get from exchange
             if ohlcv_data is None:
-                ohlcv_data = await self.exchange.get_ohlcv(
-                    symbol, STRATEGY_CONFIG.get("timeframes", ["1h"])
-                )
+                # Buat dictionary untuk menyimpan data dari berbagai timeframe
+                ohlcv_data = {}
                 
-                # Cache in Redis for future use
-                if self.redis and self.redis.is_connected():
+                # Ambil data untuk setiap timeframe
+                for timeframe in STRATEGY_CONFIG.get("timeframes", ["1h"]):
                     try:
-                        for timeframe, df in ohlcv_data.items():
-                            self.redis.save_ohlcv(symbol, timeframe, df)
-                            logger.debug(f"Cached OHLCV data for {symbol} {timeframe} in Redis")
+                        df = await self.exchange.fetch_ohlcv(symbol, timeframe)
+                        if df is not None and not df.empty:
+                            ohlcv_data[timeframe] = df
+                            logger.debug(f"Fetched OHLCV data for {symbol} {timeframe} from exchange")
+                            
+                            # Cache in Redis for future use
+                            if self.redis and self.redis.is_connected():
+                                try:
+                                    self.redis.save_ohlcv(symbol, timeframe, df)
+                                    logger.debug(f"Cached OHLCV data for {symbol} {timeframe} in Redis")
+                                except Exception as e:
+                                    logger.error(f"Error caching OHLCV data in Redis: {e}")
                     except Exception as e:
-                        logger.error(f"Error caching OHLCV data in Redis: {e}")
+                        logger.error(f"Error fetching OHLCV data for {symbol} {timeframe}: {e}")
+                
+                # Jika tidak ada data yang berhasil diambil, keluar
+                if not ohlcv_data:
+                    logger.error(f"Failed to get OHLCV data for {symbol} from any timeframe")
+                    return False
 
             # Get current price
             current_price = await self.exchange.get_current_price(symbol)
