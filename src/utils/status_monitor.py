@@ -213,6 +213,22 @@ class BotStatusMonitor:
             for symbol, trade_data in active_trades.items():
                 trade_info = trade_data.copy()  # Make a copy to avoid modifying original
                 trade_info["symbol"] = symbol  # Add symbol to the trade info
+                
+                # Ensure current_price and pnl are properly set
+                if "current_price" not in trade_info and "entry_price" in trade_info:
+                    logger.warning(f"Missing current_price for {symbol}, using entry_price")
+                    trade_info["current_price"] = trade_info["entry_price"]
+                
+                # Calculate pnl if not present but we have prices
+                if "pnl" not in trade_info and "current_price" in trade_info and "entry_price" in trade_info:
+                    try:
+                        entry = float(trade_info["entry_price"])
+                        current = float(trade_info["current_price"])
+                        trade_info["pnl"] = round(((current - entry) / entry) * 100, 2)
+                        logger.debug(f"Calculated pnl for {symbol}: {trade_info['pnl']}%")
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Error calculating pnl for {symbol}: {e}")
+                
                 trades_list.append(trade_info)
                 
             # Call existing update_trades method
@@ -511,9 +527,21 @@ class BotStatusMonitor:
                 current_price = trade.get('current_price', 'N/A')
                 if isinstance(current_price, (int, float)):
                     msg += f"Current: {current_price:.8f}\n"
+                elif isinstance(current_price, str) and current_price.replace('.', '', 1).isdigit():
+                    # Handle string representation of numbers
+                    msg += f"Current: {float(current_price):.8f}\n"
                 else:
                     msg += f"Current: {current_price}\n"
-                msg += f"P/L: {trade.get('pnl', 0):.2f}%\n"
+                
+                # Format P/L with proper handling of different data types
+                pnl = trade.get('pnl', 0)
+                if isinstance(pnl, (int, float)):
+                    msg += f"P/L: {pnl:.2f}%\n"
+                elif isinstance(pnl, str) and pnl.replace('-', '', 1).replace('.', '', 1).isdigit():
+                    # Handle string representation of numbers including negative values
+                    msg += f"P/L: {float(pnl):.2f}%\n"
+                else:
+                    msg += f"P/L: 0.00%\n"
                 
                 # Add confidence if available
                 if 'confidence' in trade:
