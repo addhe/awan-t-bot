@@ -172,11 +172,11 @@ class BollStochStrategy:
                         df[col] = df[col].fillna(df["close"])
                     elif col == "ema":
                         # For EMA, use close price or forward fill if available
-                        df[col] = df[col].fillna(method='ffill').fillna(df["close"])
+                        df[col] = df[col].ffill().fillna(df["close"])
                     elif col in ["stoch_k", "stoch_d"]:
                         # For oscillators, use a more sophisticated approach
                         # First try forward fill, then use 50 as middle value
-                        df[col] = df[col].fillna(method='ffill').fillna(50)
+                        df[col] = df[col].ffill().fillna(50)
                     
                     # Log the filling for debugging
                     logger.debug(
