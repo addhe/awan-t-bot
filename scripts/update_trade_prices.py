@@ -92,8 +92,16 @@ async def update_trade_prices():
         
         # Update active trades in status monitor
         if updated_trades:
-            status_monitor.update_active_trades(updated_trades)
-            logger.info(f"Updated {len(updated_trades)} active trades in status monitor")
+            # Convert list to dictionary with symbol as key for update_active_trades
+            trades_dict = {}
+            for trade in updated_trades:
+                symbol = trade.get('symbol')
+                if symbol:
+                    trades_dict[symbol] = trade
+            
+            # Update status monitor with dictionary format
+            status_monitor.update_active_trades(trades_dict)
+            logger.info(f"Updated {len(trades_dict)} active trades in status monitor")
             
             # Also save all active trades to Redis
             try:
