@@ -167,30 +167,33 @@ class TradingBot:
         try:
             logger.debug(f"Analyzing {symbol} for trading signals", symbol=symbol)
             
-            # Get OHLCV data from Redis first if available
-            ohlcv_data = None
-            if self.redis and self.redis.is_connected():
-                try:
-                    # Try to get from Redis first
-                    for timeframe in STRATEGY_CONFIG.get("timeframes", ["1h"]):
-                        ohlcv_data = self.redis.get_ohlcv(symbol, timeframe)
-                        if ohlcv_data is not None and not ohlcv_data.empty:
-                            logger.debug(f"Using cached OHLCV data for {symbol} {timeframe} from Redis")
-                            break
-                except Exception as e:
-                    logger.error(f"Error getting OHLCV data from Redis: {e}")
-                    ohlcv_data = None
-            
-            # If not in Redis, get from exchange
-            if ohlcv_data is None:
-                # Buat dictionary untuk menyimpan data dari berbagai timeframe
-                ohlcv_data = {}
-                
-                # Ambil data untuk setiap timeframe
-                for timeframe in STRATEGY_CONFIG.get("timeframes", ["1h"]):
+            # Buat dictionary untuk menyimpan data OHLCV dari berbagai timeframe
+            ohlcv_data = {}
+        
+            # Ambil data untuk setiap timeframe
+            for timeframe in STRATEGY_CONFIG.get("timeframes", ["1h"]):
+                # Coba ambil dari Redis dulu
+                df = None
+                if self.redis and self.redis.is_connected():
                     try:
-                        df = await self.exchange.fetch_ohlcv(symbol, timeframe)
-                        if df is not None and not df.empty:
+                        df = self.redis.get_ohlcv(symbol, timeframe)
+                        if df is not None and not df.empty and 'close' in df.columns:
+                            logger.debug(f"Using cached OHLCV data for {symbol} {timeframe} from Redis")
+                            ohlcv_data[timeframe] = df
+                            continue  # Lanjut ke timeframe berikutnya jika berhasil
+                    except Exception as e:
+                        logger.error(f"Error getting OHLCV data from Redis: {e}")
+                        df = None
+            
+                # Jika tidak ada di Redis atau format tidak valid, ambil dari exchange
+                try:
+                    df = await self.exchange.fetch_ohlcv(symbol, timeframe)
+                    if df is not None and not df.empty:
+                        # Debug kolom DataFrame
+                        logger.debug(f"DataFrame columns for {symbol} {timeframe}: {df.columns.tolist()}")
+                        
+                        # Pastikan df memiliki kolom yang diharapkan
+                        if 'close' in df.columns:
                             ohlcv_data[timeframe] = df
                             logger.debug(f"Fetched OHLCV data for {symbol} {timeframe} from exchange")
                             
@@ -201,18 +204,27 @@ class TradingBot:
                                     logger.debug(f"Cached OHLCV data for {symbol} {timeframe} in Redis")
                                 except Exception as e:
                                     logger.error(f"Error caching OHLCV data in Redis: {e}")
-                    except Exception as e:
-                        logger.error(f"Error fetching OHLCV data for {symbol} {timeframe}: {e}")
-                
-                # Jika tidak ada data yang berhasil diambil, keluar
-                if not ohlcv_data:
-                    logger.error(f"Failed to get OHLCV data for {symbol} from any timeframe")
-                    return False
+                        else:
+                            logger.error(f"DataFrame for {symbol} {timeframe} missing 'close' column: {df.columns}")
+                    else:
+                        logger.warning(f"Empty DataFrame returned for {symbol} {timeframe}")
+                except Exception as e:
+                    logger.error(f"Error fetching OHLCV data for {symbol} {timeframe}: {e}")
+        
+            # Jika tidak ada data yang berhasil diambil, keluar
+            if not ohlcv_data:
+                logger.error(f"Failed to get OHLCV data for {symbol} from any timeframe")
+                return False
 
             # Get current price
             current_price = await self.exchange.get_current_price(symbol)
 
             # Analyze for signals
+            # Pastikan ohlcv_data dalam format yang diharapkan (dictionary dengan timeframes sebagai key)
+            if not ohlcv_data:
+                logger.error(f"No OHLCV data available for {symbol}")
+                return False
+                
             signal, confidence, indicators = self.strategy.analyze_signals(ohlcv_data)
 
             # Save signal to Redis
