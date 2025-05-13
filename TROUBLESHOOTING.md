@@ -321,6 +321,39 @@ Untuk melihat semua komponen dan sistem bot berjalan dengan lengkap:
    docker-compose up -d
    ```
 
+9. **TypeError pada RedisManager atau PostgresManager**:
+   Jika Anda melihat error seperti:
+   ```
+   TypeError: __init__() takes 1 positional argument but 2 were given
+   ```
+   
+   Ini berarti class manager tidak menerima parameter konfigurasi. Solusi:
+   
+   ```python
+   # Perbarui class RedisManager di src/utils/redis_manager.py
+   def __init__(self, config=None):
+       """Initialize Redis connection
+       
+       Args:
+           config (dict, optional): Redis configuration dictionary. If None, use environment variables.
+       """
+       # Get Redis configuration from config or environment variables
+       if config is None:
+           # Fallback to environment variables
+           redis_host = os.environ.get("REDIS_HOST", "localhost")
+           # ... konfigurasi lainnya ...
+       else:
+           # Use provided config
+           redis_host = config.get("host", "localhost")
+           # ... konfigurasi lainnya ...
+   ```
+   
+   Kemudian copy file ke container dan restart:
+   ```bash
+   docker cp src/utils/redis_manager.py awan-trading-bot:/app/src/utils/redis_manager.py
+   docker-compose restart trading-bot
+   ```
+
 ### e. Catatan Penting
 
 Mengingat strategi trading konservatif dengan Bollinger Bands + Stochastic RSI dan parameter min_confidence 0.7 (70%), normal jika bot tidak melakukan banyak trading dalam waktu singkat. Bot ini dirancang untuk mengutamakan kualitas sinyal dibanding kuantitas trading, sehingga mungkin tidak ada aktivitas trading selama beberapa jam.

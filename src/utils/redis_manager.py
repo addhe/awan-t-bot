@@ -16,22 +16,44 @@ logger = get_logger(__name__)
 class RedisManager:
     """Redis manager for caching OHLCV data and indicators"""
 
-    def __init__(self):
-        """Initialize Redis connection"""
-        # Get Redis configuration from environment variables
-        redis_host = os.environ.get("REDIS_HOST", "localhost")
-        redis_port = int(os.environ.get("REDIS_PORT", 6379))
-        redis_password = os.environ.get("REDIS_PASSWORD", "StrongRedisPassword")
+    def __init__(self, config=None):
+        """Initialize Redis connection
+        
+        Args:
+            config (dict, optional): Redis configuration dictionary. If None, use environment variables.
+        """
+        # Get Redis configuration from config or environment variables
+        if config is None:
+            # Fallback to environment variables
+            redis_host = os.environ.get("REDIS_HOST", "localhost")
+            redis_port = int(os.environ.get("REDIS_PORT", 6379))
+            redis_password = os.environ.get("REDIS_PASSWORD", "StrongRedisPassword")
+            decode_responses = True
+            socket_timeout = 5
+            socket_connect_timeout = 5
+            retry_on_timeout = True
+            health_check_interval = 30
+        else:
+            # Use provided config
+            redis_host = config.get("host", "localhost")
+            redis_port = config.get("port", 6379)
+            redis_password = config.get("password", "StrongRedisPassword")
+            decode_responses = config.get("decode_responses", True)
+            socket_timeout = config.get("socket_timeout", 5)
+            socket_connect_timeout = config.get("socket_connect_timeout", 5)
+            retry_on_timeout = config.get("retry_on_timeout", True)
+            health_check_interval = config.get("health_check_interval", 30)
         
         # Initialize Redis client
         self.redis = redis.Redis(
             host=redis_host,
             port=redis_port,
             password=redis_password,
-            decode_responses=True,  # Automatically decode responses to strings
-            socket_timeout=5,  # 5 seconds timeout
-            socket_connect_timeout=5,
-            retry_on_timeout=True,
+            decode_responses=decode_responses,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_connect_timeout,
+            retry_on_timeout=retry_on_timeout,
+            health_check_interval=health_check_interval
         )
         
         # Test connection
