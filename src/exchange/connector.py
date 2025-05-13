@@ -96,7 +96,7 @@ class ExchangeConnector:
     async def fetch_ohlcv(
         self, symbol: str, timeframe: str = "1h", limit: int = 100
     ) -> pd.DataFrame:
-        """Fetch OHLCV data from exchange with rate limiting
+        """Fetch OHLCV data from exchange or Redis cache
 
         Args:
             symbol: Trading pair symbol (e.g., 'BTC/USDT')
@@ -106,7 +106,26 @@ class ExchangeConnector:
         Returns:
             DataFrame with OHLCV data or empty DataFrame on failure.
         """
-        # Timeouts are now set during initialization
+        # Import Redis manager here to avoid circular imports
+        from src.utils.redis_manager import redis_manager
+        
+        # Try to get data from Redis first
+        cached_df = None
+        try:
+            cached_df = redis_manager.get_ohlcv(symbol, timeframe)
+            if cached_df is not None and len(cached_df) >= limit:
+                logger.info(
+                    f"Using cached OHLCV data from Redis",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    candles=len(cached_df)
+                )
+                # Return the most recent 'limit' candles
+                return cached_df.sort_index(ascending=False).head(limit).sort_index()
+        except Exception as redis_err:
+            logger.warning(f"Error accessing Redis cache: {redis_err}")
+        
+        # If not in cache or not enough data, fetch from exchange
         logger.info(
             f"Requesting OHLCV data with explicit limit parameter",
             symbol=symbol,
@@ -123,7 +142,12 @@ class ExchangeConnector:
                 ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             except Exception as e2:
                 logger.error(f"Fallback also failed: {e2}")
+                # If we have cached data but not enough, return what we have
+                if cached_df is not None:
+                    logger.warning(f"Using partial cached data due to API failure")
+                    return cached_df
                 return pd.DataFrame()  # Return empty dataframe on failure
+        
         # handle_exchange_errors returns None on failure after retries
         if ohlcv is None:
             logger.warning(
@@ -131,6 +155,10 @@ class ExchangeConnector:
                 symbol=symbol,
                 timeframe=timeframe,
             )
+            # If we have cached data but not enough, return what we have
+            if cached_df is not None:
+                logger.warning(f"Using partial cached data due to API failure")
+                return cached_df
             return pd.DataFrame() # Return empty dataframe as per docstring
 
         df = pd.DataFrame(

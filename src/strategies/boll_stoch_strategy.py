@@ -35,13 +35,61 @@ class BollStochStrategy:
         self.stoch_overbought = stoch_overbought
 
     @handle_strategy_errors(notify=True)
-    def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate all technical indicators for the strategy."""
+    def calculate_indicators(self, df: pd.DataFrame, symbol: str = "", timeframe: str = "") -> pd.DataFrame:
+        """Calculate all technical indicators for the strategy.
+        
+        Args:
+            df: DataFrame with OHLCV data
+            symbol: Trading pair symbol (for Redis caching)
+            timeframe: Timeframe (for Redis caching)
+            
+        Returns:
+            DataFrame with indicators added
+        """
         if df.empty:
             logger.warning(
                 "Empty DataFrame provided for indicator calculation"
             )
             return df
+            
+        # Try to get cached indicators if symbol and timeframe are provided
+        if symbol and timeframe:
+            try:
+                # Import Redis manager here to avoid circular imports
+                from src.utils.redis_manager import redis_manager
+                
+                # Try to get indicators from Redis
+                cached_indicators = redis_manager.get_indicators(symbol, timeframe)
+                if cached_indicators is not None:
+                    # Get the timestamps that match our OHLCV data
+                    common_timestamps = df.index.intersection(cached_indicators.index)
+                    
+                    if len(common_timestamps) > 0:
+                        logger.info(
+                            f"Using cached indicators from Redis",
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            cached_rows=len(common_timestamps),
+                            total_rows=len(df)
+                        )
+                        
+                        # Merge OHLCV data with cached indicators
+                        for ts in common_timestamps:
+                            for col in cached_indicators.columns:
+                                if ts in df.index and ts in cached_indicators.index:
+                                    df.at[ts, col] = cached_indicators.at[ts, col]
+                        
+                        # If all rows have indicators, return early
+                        missing_rows = len(df) - len(common_timestamps)
+                        if missing_rows == 0:
+                            return df
+                        else:
+                            logger.debug(
+                                f"Need to calculate indicators for {missing_rows} additional rows",
+                                missing_rows=missing_rows
+                            )
+            except Exception as e:
+                logger.warning(f"Error getting cached indicators: {e}")
 
         # Check if we have enough data for calculations
         min_required_candles = max(self.boll_window, self.ema_window, self.stoch_window) + 10
@@ -108,27 +156,77 @@ class BollStochStrategy:
                 row_count=len(df),
             )
 
-            # Fill NaN values with appropriate defaults
+            # Improved NaN handling for each indicator type
             for col in indicator_columns:
                 if df[col].isna().any():
-                    if col in ["bb_upper", "bb_middle", "bb_lower", "ema"]:
-                        # For price-based indicators, use close price
+                    if col in ["bb_upper", "bb_lower"]:
+                        # For Bollinger Bands, use a multiple of close price
+                        if col == "bb_upper":
+                            # Upper band: close price + 2% as a conservative estimate
+                            df[col] = df[col].fillna(df["close"] * 1.02)
+                        else:
+                            # Lower band: close price - 2% as a conservative estimate
+                            df[col] = df[col].fillna(df["close"] * 0.98)
+                    elif col == "bb_middle":
+                        # For middle band, use close price directly
                         df[col] = df[col].fillna(df["close"])
+                    elif col == "ema":
+                        # For EMA, use close price or forward fill if available
+                        df[col] = df[col].fillna(method='ffill').fillna(df["close"])
                     elif col in ["stoch_k", "stoch_d"]:
-                        # For oscillators, use middle value (50)
-                        df[col] = df[col].fillna(50)
+                        # For oscillators, use a more sophisticated approach
+                        # First try forward fill, then use 50 as middle value
+                        df[col] = df[col].fillna(method='ffill').fillna(50)
+                    
+                    # Log the filling for debugging
+                    logger.debug(
+                        f"Filled {df[col].isna().sum()} NaN values in {col}",
+                        column=col,
+                        fill_method="custom"
+                    )
 
-        # Verify no NaN values remain
+        # Verify no NaN values remain and handle any that do
         remaining_nan = {col: df[col].isna().sum() for col in indicator_columns}
         if sum(remaining_nan.values()) > 0:
             logger.error(
                 "Failed to remove all NaN values from indicators",
                 remaining_nan=remaining_nan
             )
-            # Last resort: drop NaN rows, but this is not ideal
-            df = df.dropna(subset=indicator_columns)
-            logger.warning(f"Dropped rows with NaN values, {len(df)} rows remaining")
+            # Instead of dropping rows, use more aggressive filling
+            for col in indicator_columns:
+                if df[col].isna().any():
+                    # Last resort: use forward fill then backward fill
+                    df[col] = df[col].fillna(method='ffill').fillna(method='bfill')
+                    logger.warning(f"Aggressively filled remaining NaN values in {col}")
+            
+            # Final check
+            final_nan = {col: df[col].isna().sum() for col in indicator_columns}
+            if sum(final_nan.values()) > 0:
+                logger.critical(
+                    "CRITICAL: Still have NaN values after aggressive filling",
+                    final_nan=final_nan
+                )
+                # As absolute last resort, drop rows, but log this as a critical issue
+                df = df.dropna(subset=indicator_columns)
+                logger.warning(f"Dropped rows with NaN values, {len(df)} rows remaining")
 
+        # Save indicators to Redis if symbol and timeframe are provided
+        if symbol and timeframe:
+            try:
+                # Import Redis manager here to avoid circular imports
+                from src.utils.redis_manager import redis_manager
+                
+                # Save indicators to Redis
+                redis_manager.save_indicators(symbol, timeframe, df)
+                logger.debug(
+                    f"Saved indicators to Redis",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    rows=len(df)
+                )
+            except Exception as e:
+                logger.warning(f"Error saving indicators to Redis: {e}")
+                
         return df
 
     @handle_strategy_errors(notify=False)

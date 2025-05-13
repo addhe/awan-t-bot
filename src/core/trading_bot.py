@@ -153,10 +153,11 @@ class TradingBot:
 
         for tf in pair_timeframes: # Use pair-specific timeframes
             df = await self.exchange.fetch_ohlcv(
-                symbol, timeframe=tf, limit=100
+                symbol, timeframe=tf, limit=200
             )
             if not df.empty:
-                df = self.strategy.calculate_indicators(df)
+                # Pass symbol and timeframe to calculate_indicators for Redis caching
+                df = self.strategy.calculate_indicators(df, symbol=symbol, timeframe=tf)
                 timeframe_data[tf] = df
 
         if not timeframe_data:

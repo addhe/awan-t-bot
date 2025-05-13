@@ -462,17 +462,16 @@ class PositionManager:
         if position_count == 0:
             logger.info("No active positions to check")
             return []
+            
+        # Get excluded symbols from config
+        excluded_symbols = self.trading_config.get("excluded_symbols", [])
 
         logger.info(f"Checking {position_count} active positions: {list(self.active_trades.keys())}")
 
         # Get trailing stop config once
-        tsl_pct = self.config.get("trailing_stop_pct", 0)
-        tsl_activation_pct = self.config.get("trailing_stop_activation_pct", 0)
-        trailing_stop_enabled = tsl_pct > 0 and tsl_activation_pct >= 0 # Activation can be 0
+                continue
 
-        for symbol, trade in list(self.active_trades.items()):
-            try:
-                # Get current market data (Consider using a more relevant timeframe?)
+            current_price = df["close"].iloc[-1]
                 # TODO: Make timeframe configurable or use shortest from pair_config
                 df = await self.exchange.fetch_ohlcv(
                     symbol, timeframe="15m", limit=60
