@@ -47,7 +47,7 @@ class TradingBot:
         self.postgres = None
         self.data_sync = None
         self.start_time = datetime.now()
-        self.last_status_update = 0  # timestamp of last status update
+        self.last_status_update = time.time()  # timestamp of last status update (epoch time)
         self.last_health_check = datetime.now()
         self.last_data_sync = datetime.now() - timedelta(hours=1)  # Force sync on startup
 
@@ -378,7 +378,7 @@ class TradingBot:
                 await send_telegram_message(
                     self.monitor.format_status_message()
                 )
-                self.last_status_update = now
+                self.last_status_update = time.time()  # Use epoch time for consistency
                 logger.info("Sent status update to Telegram")
 
     def _calculate_performance(self) -> Dict[str, float]:
