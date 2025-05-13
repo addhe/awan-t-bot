@@ -377,9 +377,49 @@ class TradingBot:
         
         # Get active trades
         active_trades = self.position_manager.active_trades
-        
-        # Update status file
-        self.monitor.update_active_trades(active_trades)
+
+        # --- PATCH: Update all current prices before update_active_trades ---
+        updated_trades = {}
+        for symbol, trade_data in active_trades.items():
+            entry_price = trade_data.get('entry_price')
+            if not entry_price:
+                logger.warning(f"Missing entry price for {symbol}")
+                continue
+            current_price = None
+            # Try Redis first
+            if self.redis and self.redis.is_connected():
+                try:
+                    for timeframe in ['1m', '5m', '15m', '1h']:
+                        df = self.redis.get_ohlcv(symbol, timeframe)
+                        if df is not None and not df.empty:
+                            current_price = float(df.iloc[-1]['close'])
+                            logger.debug(f"[PATCH] Using cached price for {symbol} from Redis ({timeframe}): {current_price}")
+                            break
+                except Exception as e:
+                    logger.error(f"[PATCH] Error getting price from Redis for {symbol}: {e}")
+            # If not found in Redis, fetch from exchange
+            if current_price is None:
+                try:
+                    current_price = await self.exchange.get_current_price(symbol)
+                    logger.debug(f"[PATCH] Fetched price for {symbol} from exchange: {current_price}")
+                except Exception as e:
+                    logger.error(f"[PATCH] Error fetching price for {symbol} from exchange: {e}")
+                    current_price = trade_data.get('current_price')  # Fallback to existing price if all fails
+            # Calculate PnL
+            pnl = 0.0
+            if current_price and entry_price:
+                try:
+                    pnl = round(((float(current_price) - float(entry_price)) / float(entry_price)) * 100, 2)
+                except (ValueError, TypeError, ZeroDivisionError) as e:
+                    logger.error(f"[PATCH] Error calculating PnL for {symbol}: {e}")
+            updated_trades[symbol] = {
+                **trade_data,
+                'current_price': current_price,
+                'pnl': pnl
+            }
+        # Update status file with always-updated prices
+        self.monitor.update_active_trades(updated_trades)
+        logger.info("[PATCH] Updated active_trades with latest prices before all status/telegram updates")
         
         # Also save active trades to Redis for quick access
         if self.redis and self.redis.is_connected():
