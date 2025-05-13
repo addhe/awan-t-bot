@@ -5,11 +5,13 @@ Script to check bot status
 import sys
 import os
 import re
+import json
 import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 from src.utils.status_monitor import BotStatusMonitor
 from src.exchange.connector import ExchangeConnector
+from src.utils.redis_manager import RedisManager
 from config.settings import EXCHANGE_CONFIG, SYSTEM_CONFIG
 
 # Add project root to Python path
@@ -18,6 +20,69 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 async def extract_confidence_from_logs(monitor):
     """Extract confidence levels from recent logs and update status"""
+    redis_manager = RedisManager()
+    
+    # First, try to get confidence levels from Redis
+    redis_confidence = {}
+    try:
+        if redis_manager.is_connected():
+            # Get all keys matching the signal pattern
+            signal_keys = redis_manager.redis.keys("signal:*")
+            if signal_keys:
+                print(f"Found {len(signal_keys)} signal keys in Redis")
+                for key in signal_keys:
+                    try:
+                        # Get signal data
+                        signal_data = redis_manager.redis.get(key)
+                        if signal_data:
+                            signal_dict = json.loads(signal_data)
+                            symbol = signal_dict.get("symbol")
+                            if symbol:
+                                redis_confidence[symbol] = {
+                                    "confidence": signal_dict.get("confidence", 0.0),
+                                    "signals_detected": 1 if signal_dict.get("signal") == "buy" else 0,
+                                    "timestamp": signal_dict.get("timestamp", datetime.now().isoformat()),
+                                    "analyzed_timeframes": signal_dict.get("timeframes", []),
+                                    "calculation_method": "redis_signal"
+                                }
+                                print(f"Retrieved confidence for {symbol} from Redis: {redis_confidence[symbol]['confidence']:.2f}")
+                    except Exception as e:
+                        print(f"Error processing Redis signal key {key}: {e}")
+    except Exception as e:
+        print(f"Error accessing Redis for confidence levels: {e}")
+    
+    # If we found confidence data in Redis, use it
+    if redis_confidence:
+        try:
+            # Get existing confidence levels
+            existing_levels = monitor.get_confidence_levels() or {}
+            
+            # Update with Redis data
+            for symbol, data in redis_confidence.items():
+                existing_levels[symbol] = data
+            
+            # Update last updated timestamp
+            existing_levels["last_updated"] = datetime.now().isoformat()
+            
+            # Save to file
+            monitor.update_confidence_levels(existing_levels)
+            print(f"Updated confidence levels for {len(redis_confidence)} symbols from Redis")
+            
+            # Also save to Redis for quick access
+            try:
+                redis_manager.redis.set("confidence_levels", json.dumps(existing_levels))
+                redis_manager.redis.expire("confidence_levels", 60 * 60 * 24)  # 1 day expiration
+                print("Saved confidence levels to Redis")
+            except Exception as e:
+                print(f"Error saving confidence levels to Redis: {e}")
+                
+            return
+        except Exception as e:
+            print(f"⚠️ Error updating confidence levels from Redis: {e}")
+    
+    # If Redis doesn't have confidence data, fall back to log extraction
+    print("No confidence data found in Redis, falling back to log extraction")
+    
     log_file = Path("logs/trading_bot.log")
     if not log_file.exists():
         print("⚠️ Log file not found, skipping confidence extraction")
@@ -70,6 +135,9 @@ async def extract_confidence_from_logs(monitor):
                 start_idx = line.find("'timeframe_conditions': {")
                 if start_idx == -1:
                     continue
+            except Exception as e:
+                print(f"Error finding timeframe_conditions in line: {e}")
+                continue
                     
                 # Find the matching closing brace
                 brace_count = 0
@@ -139,25 +207,62 @@ async def extract_confidence_from_logs(monitor):
                 if total_conditions > 0:
                     confidence = conditions_met / total_conditions
                 
-                # Store the confidence level
+                # Store data
                 confidence_data[current_symbol] = {
                     "confidence": confidence,
-                    "timestamp": timestamp.isoformat(),
                     "signals_detected": signals_detected,
-                    "calculation_method": "status_check",
-                    "analyzed_timeframes": list(timeframe_conditions.keys())
+                    "timestamp": timestamp.isoformat(),
+                    "conditions": timeframe_conditions,
+                    "analyzed_timeframes": list(timeframe_conditions.keys()),
+                    "calculation_method": "log_extraction"
                 }
-            except Exception as e:
-                print(f"⚠️ Error parsing conditions for {current_symbol}: {e}")
+                
+                print(f"Extracted confidence for {current_symbol}: {confidence:.2f}")
+                
+                # Also save to Redis for future use
+                try:
+                    if redis_manager.is_connected():
+                        # Save as a signal
+                        signal_type = "buy" if confidence >= 0.7 else "neutral"
+                        redis_manager.save_signal(
+                            symbol=current_symbol,
+                            signal=signal_type,
+                            confidence=confidence,
+                            timeframes=list(timeframe_conditions.keys())
+                        )
+                        print(f"Saved signal to Redis for {current_symbol}")
+                except Exception as e:
+                    print(f"Error saving signal to Redis for {current_symbol}: {e}")
                 continue
     
     # Update confidence levels in status file
     if confidence_data:
         try:
-            monitor.update_confidence_levels(confidence_data)
+            # Get existing confidence levels
+            existing_levels = monitor.get_confidence_levels() or {}
+            
+            # Update with new data
+            for symbol, data in confidence_data.items():
+                existing_levels[symbol] = data
+            
+            # Update last updated timestamp
+            existing_levels["last_updated"] = datetime.now().isoformat()
+            
+            # Save to file
+            monitor.update_confidence_levels(existing_levels)
             print(f"✅ Updated confidence levels for {len(confidence_data)} symbols")
             for symbol, data in confidence_data.items():
                 print(f"  - {symbol}: {data['confidence']:.2f} (from log at {data['timestamp']})")
+            
+            # Also save to Redis for quick access
+            try:
+                if redis_manager.is_connected():
+                    redis_manager.redis.set("confidence_levels", json.dumps(existing_levels))
+                    redis_manager.redis.expire("confidence_levels", 60 * 60 * 24)  # 1 day expiration
+                    print("Saved confidence levels to Redis")
+            except Exception as e:
+                print(f"Error saving confidence levels to Redis: {e}")
+                
         except Exception as e:
             print(f"⚠️ Error updating confidence levels: {e}")
     else:
@@ -167,7 +272,21 @@ async def extract_confidence_from_logs(monitor):
         print("  - Bot is not logging signal analysis")
         print("Keeping previous confidence levels if available.")
         
-        # Try to display current confidence levels
+        # Try to get confidence levels from Redis
+        try:
+            if redis_manager.is_connected():
+                redis_conf_data = redis_manager.redis.get("confidence_levels")
+                if redis_conf_data:
+                    redis_conf = json.loads(redis_conf_data)
+                    print("\nFound confidence levels in Redis:")
+                    for symbol, data in redis_conf.items():
+                        if symbol != "last_updated" and isinstance(data, dict) and "confidence" in data:
+                            print(f"  - {symbol}: {data['confidence']:.2f} (last updated: {data.get('timestamp', 'unknown')})")
+                    return
+        except Exception as e:
+            print(f"Error getting confidence levels from Redis: {e}")
+        
+        # Try to display current confidence levels from file
         current_levels = monitor.get_confidence_levels()
         if current_levels and any(k != "last_updated" for k in current_levels.keys()):
             print("\nCurrent confidence levels in status file:")
@@ -179,8 +298,9 @@ async def extract_confidence_from_logs(monitor):
 
 async def update_active_trades_prices(monitor):
     """Update prices for active trades before showing status"""
-    # Initialize exchange connector
+    # Initialize exchange connector and Redis manager
     exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
+    redis_manager = RedisManager()
 
     # Get active trades
     trades = monitor.get_active_trades()
@@ -210,7 +330,24 @@ async def update_active_trades_prices(monitor):
                     print(f"Skipping {symbol} as position appears to be closed ({base_currency} balance too low)")
                     continue
 
-            current_price = await exchange.get_current_price(symbol)
+            # Try to get current price from Redis first
+            current_price = None
+            try:
+                # Get the most recent OHLCV data from Redis
+                for timeframe in ['1m', '5m', '15m', '1h']:
+                    df = redis_manager.get_ohlcv(symbol, timeframe)
+                    if df is not None and not df.empty:
+                        current_price = df.iloc[-1]['close']
+                        print(f"Using cached price for {symbol} from Redis ({timeframe}): {current_price}")
+                        break
+            except Exception as e:
+                print(f"Error getting price from Redis for {symbol}: {e}")
+
+            # If not found in Redis, fetch from exchange
+            if current_price is None:
+                current_price = await exchange.get_current_price(symbol)
+                print(f"Fetched price for {symbol} from exchange: {current_price}")
+
             entry_price = trade["entry_price"]
             pnl = 0.0
             if entry_price != 0:
@@ -224,6 +361,23 @@ async def update_active_trades_prices(monitor):
                 "pnl": pnl,
             })
             print(f"Updated {symbol} price: {current_price}")
+
+            # Also save the trade info to Redis for quick access
+            try:
+                redis_key = f"active_trade:{symbol}"
+                redis_manager.redis.hmset(redis_key, {
+                    "symbol": symbol,
+                    "entry_price": str(entry_price),
+                    "current_price": str(current_price),
+                    "quantity": str(trade["quantity"]),
+                    "pnl": str(pnl),
+                    "updated_at": datetime.now().isoformat()
+                })
+                # Set expiration to 1 day
+                redis_manager.redis.expire(redis_key, 60 * 60 * 24)
+            except Exception as e:
+                print(f"Error saving trade to Redis for {symbol}: {e}")
+                
         except Exception as e:
             print(f"Error updating {symbol} price: {e}")
             # Don't keep trades with errors - they might be closed
@@ -231,9 +385,27 @@ async def update_active_trades_prices(monitor):
     # Update trades file with fresh prices
     if updated_trades:
         monitor.update_trades(updated_trades)
+        
+        # Also save all active trades to Redis
+        try:
+            redis_manager.redis.set("active_trades", json.dumps(updated_trades))
+            redis_manager.redis.expire("active_trades", 60 * 60 * 24)  # 1 day expiration
+            print(f"Saved {len(updated_trades)} active trades to Redis")
+        except Exception as e:
+            print(f"Error saving active trades to Redis: {e}")
+            
     elif trades:  # If we had trades but now have none, clear the file
         print("All positions appear to be closed. Clearing active trades.")
         monitor.update_trades([])
+        
+        # Also clear Redis
+        try:
+            redis_manager.redis.delete("active_trades")
+            for trade in trades:
+                redis_manager.redis.delete(f"active_trade:{trade['symbol']}")
+            print("Cleared active trades from Redis")
+        except Exception as e:
+            print(f"Error clearing active trades from Redis: {e}")
 
 
 async def async_main():

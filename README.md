@@ -2,10 +2,13 @@
 
 ## Latest Update (2025-05-13)
 
-Added Docker support and data persistence:
+Added Docker support, data persistence, and enhanced trading features:
 - Implemented Docker and Docker Compose for easy deployment
-- Added Redis for caching OHLCV data and indicators
-- Integrated PostgreSQL with TimescaleDB for long-term data storage
+- Added Redis for caching OHLCV data, indicators, and trading signals
+- Integrated PostgreSQL with TimescaleDB for long-term data storage and analysis
+- Added option to disable stop loss and only sell when minimum profit is reached
+- Enhanced position management with configurable minimum profit percentage
+- Improved data synchronization between Redis (cache) and PostgreSQL (persistent storage)
 - Enhanced error handling for insufficient balance scenarios
 - Improved indicator calculation with better NaN handling
 - Fixed position tracking with pending_close flag

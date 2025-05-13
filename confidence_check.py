@@ -16,12 +16,14 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src.utils.status_monitor import BotStatusMonitor
 from src.exchange.connector import ExchangeConnector
+from src.utils.redis_manager import RedisManager
 from config.settings import EXCHANGE_CONFIG, SYSTEM_CONFIG, STRATEGY_CONFIG
 
 
 async def get_current_market_conditions(symbol):
     """Get current market conditions for a symbol"""
     exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
+    redis_manager = RedisManager()
     
     # Get current price
     current_price = await exchange.get_current_price(symbol)
@@ -32,7 +34,16 @@ async def get_current_market_conditions(symbol):
     
     for tf in timeframes:
         try:
-            df = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=30)
+            # Try to get data from Redis first
+            df = redis_manager.get_ohlcv(symbol, tf)
+            
+            # If not in Redis, fetch from exchange
+            if df is None or df.empty:
+                print(f"Data for {symbol} {tf} not found in Redis, fetching from exchange...")
+                df = await exchange.fetch_ohlcv(symbol, timeframe=tf, limit=30)
+            else:
+                print(f"Using cached data for {symbol} {tf} from Redis")
+                
             if not df.empty:
                 # Calculate basic metrics
                 latest = df.iloc[-1]
@@ -47,10 +58,22 @@ async def get_current_market_conditions(symbol):
         except Exception as e:
             print(f"Error fetching {tf} data for {symbol}: {e}")
     
+    # Try to get indicators from Redis
+    indicators = {}
+    for tf in timeframes:
+        try:
+            tf_indicators = redis_manager.get_indicators(symbol, tf)
+            if tf_indicators is not None:
+                print(f"Using cached indicators for {symbol} {tf} from Redis")
+                indicators[tf] = tf_indicators
+        except Exception as e:
+            print(f"Error fetching indicators for {symbol} {tf} from Redis: {e}")
+    
     return {
         "symbol": symbol,
         "current_price": current_price,
-        "timeframes": timeframe_data
+        "timeframes": timeframe_data,
+        "indicators": indicators
     }
 
 
@@ -206,18 +229,88 @@ async def analyze_confidence_from_logs(hours=1, detailed=False):
 async def display_confidence_levels(hours=1, detailed=False, update_status=True):
     """Display confidence levels for all trading pairs"""
     monitor = BotStatusMonitor()
+    redis_manager = RedisManager()
     
-    # Get stored confidence levels
-    stored_confidence = monitor.get_confidence_levels()
+    # Try to get confidence levels from Redis first
+    redis_confidence = {}
+    redis_data_found = False
+    
+    if redis_manager.is_connected():
+        try:
+            # Try to get confidence levels from Redis
+            redis_conf_data = redis_manager.redis.get("confidence_levels")
+            if redis_conf_data:
+                redis_conf = json.loads(redis_conf_data)
+                print(f"Retrieved confidence levels from Redis cache")
+                for symbol, data in redis_conf.items():
+                    if symbol != "last_updated" and isinstance(data, dict):
+                        redis_confidence[symbol] = data
+                        redis_data_found = True
+            
+            # If not found in confidence_levels, try to get from signal data
+            if not redis_data_found:
+                signal_keys = redis_manager.redis.keys("signal:*")
+                if signal_keys:
+                    print(f"Found {len(signal_keys)} signal keys in Redis")
+                    for key in signal_keys:
+                        try:
+                            signal_data = redis_manager.redis.get(key)
+                            if signal_data:
+                                signal_dict = json.loads(signal_data)
+                                symbol = signal_dict.get("symbol")
+                                if symbol:
+                                    redis_confidence[symbol] = {
+                                        "confidence": signal_dict.get("confidence", 0.0),
+                                        "signals_detected": 1 if signal_dict.get("signal") == "buy" else 0,
+                                        "timestamp": signal_dict.get("timestamp", datetime.now().isoformat()),
+                                        "analyzed_timeframes": signal_dict.get("timeframes", []),
+                                        "calculation_method": "redis_signal"
+                                    }
+                                    redis_data_found = True
+                        except Exception as e:
+                            print(f"Error processing Redis signal key {key}: {e}")
+        except Exception as e:
+            print(f"Error retrieving confidence data from Redis: {e}")
+    
+    # Get stored confidence levels from file
+    stored_confidence = monitor.get_confidence_levels() or {}
     
     # Get fresh confidence levels from logs
     log_confidence = await analyze_confidence_from_logs(hours, detailed)
     
-    # Update status file if requested
+    # Update status file and Redis if requested
     if update_status and log_confidence:
         try:
+            # Update status file
             monitor.update_confidence_levels(log_confidence)
-            print(f"✅ Updated confidence levels for {len(log_confidence)} symbols")
+            print(f"✅ Updated confidence levels in status file for {len(log_confidence)} symbols")
+            
+            # Also update Redis
+            if redis_manager.is_connected():
+                # Combine with existing data
+                combined_confidence = stored_confidence.copy()
+                for symbol, data in log_confidence.items():
+                    combined_confidence[symbol] = data
+                combined_confidence["last_updated"] = datetime.now().isoformat()
+                
+                # Save to Redis
+                redis_manager.redis.set("confidence_levels", json.dumps(combined_confidence))
+                redis_manager.redis.expire("confidence_levels", 60 * 60 * 24)  # 1 day expiration
+                print(f"Updated confidence levels in Redis for {len(log_confidence)} symbols")
+                
+                # Also save as individual signals
+                for symbol, data in log_confidence.items():
+                    confidence = data.get("confidence", 0.0)
+                    timeframes = data.get("analyzed_timeframes", [])
+                    signal_type = "buy" if confidence >= STRATEGY_CONFIG.get("min_confidence", 0.7) else "neutral"
+                    redis_manager.save_signal(
+                        symbol=symbol,
+                        signal=signal_type,
+                        confidence=confidence,
+                        timeframes=timeframes
+                    )
+                    print(f"Saved signal to Redis for {symbol}")
+            
             for symbol, data in log_confidence.items():
                 print(f"  - {symbol}: {data['confidence']:.2f} (from log at {data['timestamp']})")
         except Exception as e:
@@ -230,11 +323,21 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
         print("  - Bot is not logging signal analysis")
         print("Keeping previous confidence levels if available.")
         
-        # Try to display current confidence levels
-        current_levels = monitor.get_confidence_levels()
-        if current_levels and any(k != "last_updated" for k in current_levels.keys()):
-            print("\nCurrent confidence levels in status file:")
-            for symbol, data in current_levels.items():
+        # Display confidence levels from Redis or file
+        if redis_data_found:
+            print("\nCurrent confidence levels from Redis:")
+            for symbol, data in redis_confidence.items():
+                if isinstance(data, dict) and "confidence" in data:
+                    try:
+                        timestamp = datetime.fromisoformat(data.get('timestamp', '2025-01-01T00:00:00'))
+                        age = datetime.now() - timestamp
+                        age_str = f"{int(age.total_seconds() / 3600)}h {int((age.total_seconds() % 3600) / 60)}m ago"
+                        print(f"  - {symbol}: {data['confidence']:.2f} (last updated: {timestamp.strftime('%Y-%m-%d %H:%M:%S')} - {age_str})")
+                    except:
+                        print(f"  - {symbol}: {data['confidence']:.2f} (last updated: unknown)")
+        elif any(k != "last_updated" for k in stored_confidence.keys()):
+            print("\nCurrent confidence levels from status file:")
+            for symbol, data in stored_confidence.items():
                 if symbol != "last_updated" and isinstance(data, dict) and "confidence" in data:
                     try:
                         timestamp = datetime.fromisoformat(data.get('timestamp', '2025-01-01T00:00:00'))
@@ -244,17 +347,21 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
                     except:
                         print(f"  - {symbol}: {data['confidence']:.2f} (last updated: unknown)")
         else:
-            print("No existing confidence levels found in status file.")
+            print("No existing confidence levels found in status file or Redis.")
     
-    # Combine stored and log confidence data, preferring newer data
+    # Combine all confidence data, preferring newer data
     all_confidence = {}
     
-    # Add stored confidence first
+    # Add Redis confidence first (if available)
+    for symbol, data in redis_confidence.items():
+        all_confidence[symbol] = data
+    
+    # Add stored confidence from file (if not already in Redis)
     for symbol, data in stored_confidence.items():
-        if symbol != "last_updated" and isinstance(data, dict):
+        if symbol != "last_updated" and isinstance(data, dict) and symbol not in all_confidence:
             all_confidence[symbol] = data
     
-    # Add/update with log confidence
+    # Add/update with log confidence (newest data)
     for symbol, data in log_confidence.items():
         all_confidence[symbol] = data
     

@@ -14,6 +14,8 @@ from config.settings import (
     SYSTEM_CONFIG,
     TELEGRAM_CONFIG,
     EXCHANGE_CONFIG,
+    REDIS_CONFIG,
+    POSTGRES_CONFIG,
 )
 from src.strategies.boll_stoch_strategy import BollStochStrategy
 from src.exchange.connector import ExchangeConnector
@@ -25,6 +27,9 @@ from src.utils.error_handlers import (
     handle_strategy_errors,
 )
 from src.utils.structured_logger import get_logger
+from src.utils.redis_manager import RedisManager
+from src.utils.postgres_manager import PostgresManager
+from src.utils.data_sync import DataSyncManager
 
 logger = get_logger(__name__)
 
@@ -38,9 +43,13 @@ class TradingBot:
         self.strategy = None
         self.position_manager = None
         self.monitor = BotStatusMonitor()
+        self.redis = None
+        self.postgres = None
+        self.data_sync = None
         self.start_time = datetime.now()
         self.last_status_update = 0  # timestamp of last status update
         self.last_health_check = datetime.now()
+        self.last_data_sync = datetime.now() - timedelta(hours=1)  # Force sync on startup
 
     @handle_exchange_errors(notify=True)
     async def initialize(self):
@@ -56,6 +65,20 @@ class TradingBot:
         # Initialize strategy
         self.strategy = BollStochStrategy(
             **STRATEGY_CONFIG
+        )
+
+        # Initialize Redis and PostgreSQL connections
+        self.redis = RedisManager(REDIS_CONFIG)
+        self.postgres = PostgresManager(POSTGRES_CONFIG)
+        self.data_sync = DataSyncManager()
+        
+        # Log connection status
+        redis_status = "connected" if self.redis.is_connected() else "disconnected"
+        postgres_status = "connected" if self.postgres.is_connected() else "disconnected"
+        logger.info(
+            "Database connections initialized",
+            redis_status=redis_status,
+            postgres_status=postgres_status
         )
 
         # Initialize position manager
@@ -129,191 +152,229 @@ class TradingBot:
                 logger.warning(
                     f"Skipping {symbol} - position is pending close due to previous error",
                     symbol=symbol,
-                    close_error=self.position_manager.active_trades[symbol].get("close_error", "unknown"),
-                    close_attempts=self.position_manager.active_trades[symbol].get("close_attempts", 0)
                 )
             else:
                 logger.debug(
-                    f"Skipping {symbol} - already in active trades", symbol=symbol
-                )
-            return False
-
-        logger.info(
-            f"Processing pair {symbol}", symbol=symbol, pair_config=pair_config
-        )
-
-        # Fetch data for multiple timeframes
-        timeframe_data = {}
-        pair_timeframes = pair_config.get("timeframes", []) # Get timeframes specific to this pair
-        if not pair_timeframes:
-            logger.warning(f"No timeframes defined for {symbol}", symbol=symbol)
-            return False
-
-        logger.debug(f"Fetching data for {symbol} on timeframes: {pair_timeframes}", symbol=symbol, timeframes=pair_timeframes)
-
-        for tf in pair_timeframes: # Use pair-specific timeframes
-            df = await self.exchange.fetch_ohlcv(
-                symbol, timeframe=tf, limit=200
-            )
-            if not df.empty:
-                # Pass symbol and timeframe to calculate_indicators for Redis caching
-                df = self.strategy.calculate_indicators(df, symbol=symbol, timeframe=tf)
-                timeframe_data[tf] = df
-
-        if not timeframe_data:
-            logger.warning(
-                f"Could not fetch data for {symbol} in any requested timeframe",
-                symbol=symbol,
-                requested_timeframes=pair_timeframes,
-            )
-            return False
-
-        # Analyze signals
-        try:
-            signal, confidence, risk_levels = self.strategy.analyze_signals(
-                timeframe_data
-            )
-
-            # Validate strategy return values
-            if signal is None or confidence is None or risk_levels is None:
-                logger.warning(
-                    f"Invalid strategy return values for {symbol}",
+                    f"Skipping {symbol} - already in position",
                     symbol=symbol,
-                    signal=signal,
-                    confidence=confidence,
+                    entry_price=self.position_manager.active_trades[symbol].get(
+                        "entry_price", 0
+                    ),
                 )
-                return False
-
-            logger.debug(
-                f"Signal analysis for {symbol}",
-                symbol=symbol,
-                signal=signal,
-                confidence=confidence,
-                risk_levels=risk_levels,
-            )
-        except Exception as e:
-            logger.error(
-                f"Error analyzing signals for {symbol}: {str(e)}",
-                symbol=symbol,
-                error=str(e),
-                exc_info=True
-            )
             return False
 
-        # If we have a buy signal, execute trade
-        if signal == "buy" and confidence > 0.5:
-            # Get available balance
-            balances = await self.exchange.get_all_balances()
-            usdt_balance = balances.get("USDT", 0)
+        # Get market data
+        try:
+            logger.debug(f"Analyzing {symbol} for trading signals", symbol=symbol)
+            
+            # Get OHLCV data from Redis first if available
+            ohlcv_data = None
+            if self.redis and self.redis.is_connected():
+                try:
+                    # Try to get from Redis first
+                    for timeframe in STRATEGY_CONFIG.get("timeframes", ["1h"]):
+                        ohlcv_data = self.redis.get_ohlcv(symbol, timeframe)
+                        if ohlcv_data is not None and not ohlcv_data.empty:
+                            logger.debug(f"Using cached OHLCV data for {symbol} {timeframe} from Redis")
+                            break
+                except Exception as e:
+                    logger.error(f"Error getting OHLCV data from Redis: {e}")
+                    ohlcv_data = None
+            
+            # If not in Redis, get from exchange
+            if ohlcv_data is None:
+                ohlcv_data = await self.exchange.get_ohlcv(
+                    symbol, STRATEGY_CONFIG.get("timeframes", ["1h"])
+                )
+                
+                # Cache in Redis for future use
+                if self.redis and self.redis.is_connected():
+                    try:
+                        for timeframe, df in ohlcv_data.items():
+                            self.redis.save_ohlcv(symbol, timeframe, df)
+                            logger.debug(f"Cached OHLCV data for {symbol} {timeframe} in Redis")
+                    except Exception as e:
+                        logger.error(f"Error caching OHLCV data in Redis: {e}")
 
             # Get current price
             current_price = await self.exchange.get_current_price(symbol)
-            if not current_price:
-                logger.warning(
-                    f"Could not get current price for {symbol}", symbol=symbol
-                )
-                return False
 
-            # Calculate position size
-            quantity, allocation_info = self.strategy.calculate_position_size(
-                usdt_balance, current_price, pair_config, TRADING_CONFIG
+            # Analyze for signals
+            signal, confidence, indicators = self.strategy.analyze(
+                symbol, ohlcv_data, current_price
             )
 
-            # Adjust quantity to meet minimum requirements
-            min_quantity = pair_config["min_quantity"]
-            if quantity < min_quantity:
-                logger.info(
-                    f"Calculated quantity {quantity} below minimum {min_quantity}",
-                    extra={
-                        "symbol": symbol,
-                        "quantity": quantity,
-                        "min_quantity": min_quantity,
-                    },
+            # Save signal to Redis
+            if self.redis and self.redis.is_connected():
+                try:
+                    self.redis.save_signal(
+                        symbol=symbol,
+                        signal=signal,
+                        confidence=confidence,
+                        price=current_price,
+                        timeframes=list(ohlcv_data.keys()),
+                        indicators=indicators
+                    )
+                    logger.debug(f"Saved signal for {symbol} to Redis: {signal} with confidence {confidence:.2f}")
+                except Exception as e:
+                    logger.error(f"Error saving signal to Redis: {e}")
+
+            # Log signal
+            logger.info(
+                f"Signal analysis for {symbol}: {signal}",
+                symbol=symbol,
+                signal=signal,
+                confidence=f"{confidence:.2f}",
+                price=current_price,
+                timeframe_conditions={
+                    tf: indicators.get(tf, {}) for tf in ohlcv_data.keys()
+                },
+            )
+
+            # Execute trade if signal is buy
+            if signal == "buy" and confidence >= STRATEGY_CONFIG.get("min_confidence", 0.7):
+                # Check if we have enough balance
+                available_balance = await self.exchange.get_available_balance(
+                    TRADING_CONFIG.get("quote_currency", "USDT")
                 )
-                return False
-
-            # Round quantity to required precision
-            quantity = round(quantity, pair_config["quantity_precision"])
-
-            # Open position
-            try:
-                await self.position_manager.open_position(
+                
+                # Calculate position size
+                position_size = self.position_manager.calculate_position_size(
+                    symbol, current_price
+                )
+                
+                if position_size * current_price > available_balance:
+                    logger.warning(
+                        f"Insufficient balance for {symbol}",
+                        symbol=symbol,
+                        required=position_size * current_price,
+                        available=available_balance,
+                    )
+                    return False
+                
+                # Execute buy order
+                trade_result = await self.position_manager.open_position(
                     symbol=symbol,
-                    quantity=quantity,
-                    risk_level=risk_levels,
+                    entry_price=current_price,
+                    quantity=position_size,
                     confidence=confidence,
-                    pair_config=pair_config,
                 )
-            except Exception as e:
-                logger.error(
-                    f"Failed to open position for {symbol}: {str(e)}",
-                    symbol=symbol,
-                    error=str(e),
-                    exc_info=True,
-                )
-                return False
+                
+                if trade_result:
+                    logger.info(
+                        f"Opened position for {symbol}",
+                        symbol=symbol,
+                        entry_price=current_price,
+                        quantity=position_size,
+                        confidence=f"{confidence:.2f}",
+                    )
+                    
+                    # Send Telegram notification
+                    if TELEGRAM_CONFIG["enabled"]:
+                        await send_telegram_message(
+                            f"🟢 Opened position for {symbol}\n"
+                            f"Entry price: {current_price}\n"
+                            f"Quantity: {position_size}\n"
+                            f"Confidence: {confidence:.2f}"
+                        )
+                    
+                    return True
+                else:
+                    logger.warning(
+                        f"Failed to open position for {symbol}",
+                        symbol=symbol,
+                        entry_price=current_price,
+                    )
+            
+            return False
+            
+        except Exception as e:
+            logger.error(
+                f"Error processing {symbol}: {e}",
+                symbol=symbol,
+                error=str(e),
+                exc_info=True,
+            )
+            return False
 
-            # Send notification
-            if TELEGRAM_CONFIG["enabled"]:
-                await send_telegram_message(
-                    f"🟢 New position: {symbol}\n"
-                    f"Price: {current_price}\n"
-                    f"Quantity: {quantity}\n"
-                    f"Confidence: {confidence:.2f}"
-                )
-
-            return True
-
-        return False
-
-    @handle_exchange_errors(notify=False)
-    async def update_status(self) -> None:
+    async def update_status(self):
         """Update bot status and performance metrics"""
-        # Get current balance
-        balances = await self.exchange.get_all_balances()
-
+        current_time = time.time()
+        
+        # Only update every 5 minutes to avoid too frequent updates
+        if current_time - self.last_status_update < SYSTEM_CONFIG.get("status_update_interval", 300):
+            return
+            
+        self.last_status_update = current_time
+        
+        # Get active trades
+        active_trades = self.position_manager.active_trades
+        
+        # Update status file
+        self.monitor.update_active_trades(active_trades)
+        
+        # Also save active trades to Redis for quick access
+        if self.redis and self.redis.is_connected():
+            try:
+                import json
+                self.redis.redis.set("active_trades", json.dumps(active_trades))
+                self.redis.redis.expire("active_trades", 60 * 60 * 24)  # 1 day expiration
+                logger.debug("Saved active trades to Redis")
+            except Exception as e:
+                logger.error(f"Error saving active trades to Redis: {e}")
+        
         # Calculate uptime
         uptime = datetime.now() - self.start_time
-        hours = uptime.total_seconds() / 3600
-
-        # Get performance metrics
-        performance = self._calculate_performance()
-
-        # Update active trades status to get current prices
-        if self.position_manager.active_trades:
-            logger.debug(
-                f"Updating current prices for {len(self.position_manager.active_trades)} active trades"
-            )
-            await self.position_manager._update_trades_status()
-
-        # Prepare status update
-        status = {
-            "health": {
-                "is_running": True,
-                "uptime": f"{hours:.1f} hours",
-                "last_check": datetime.now().isoformat(),
-                "errors_24h": 0,  # TODO: Implement error tracking
-            },
-            "balance": balances,
-            "performance": performance,
-        }
-
-        # Update status files
-        self.monitor.update_bot_status(status)
-
-        logger.debug(
+        uptime_hours = uptime.total_seconds() / 3600
+        
+        # Get balance
+        try:
+            balances = await self.exchange.get_all_balances()
+            total_balance = sum(float(balance) for balance in balances.values())
+        except Exception as e:
+            logger.error(f"Error getting balances: {e}")
+            total_balance = 0
+            
+        # Update status metrics
+        self.monitor.update_status_metrics({
+            "uptime_hours": round(uptime_hours, 2),
+            "active_trades": len(active_trades),
+            "total_balance": round(total_balance, 2),
+            "last_updated": datetime.now().isoformat(),
+        })
+        
+        # Log status update
+        logger.info(
             "Status updated",
-            uptime_hours=round(hours, 1),
-            active_trades=len(self.position_manager.active_trades),
-            total_balance=sum(balances.values()),
-            win_rate=performance.get("win_rate", 0),
+            active_trades=len(active_trades),
+            uptime_hours=round(uptime_hours, 2),
         )
-
-        # Send status to Telegram if enabled
-        if TELEGRAM_CONFIG["enabled"]:
-            # Send status update based on configured interval
-            now = time.time()
-            if now - self.last_status_update >= SYSTEM_CONFIG.get("status_update_interval_seconds", 3600):
+        
+        # Sync data between Redis and PostgreSQL every hour
+        sync_interval = SYSTEM_CONFIG.get("data_sync_interval", 3600)  # Default: 1 hour
+        time_since_last_sync = (datetime.now() - self.last_data_sync).total_seconds()
+        
+        if time_since_last_sync >= sync_interval:
+            try:
+                logger.info("Starting data synchronization between Redis and PostgreSQL")
+                sync_results = await self.data_sync.sync_all()
+                
+                # Log sync results
+                success_count = sum(1 for result in sync_results.values() if result)
+                logger.info(
+                    f"Data sync completed: {success_count}/{len(sync_results)} operations successful",
+                    sync_results=sync_results
+                )
+                
+                self.last_data_sync = datetime.now()
+            except Exception as e:
+                logger.error(f"Error during data synchronization: {e}")
+                
+        # Send status update via Telegram if enabled
+        if TELEGRAM_CONFIG["enabled"] and TELEGRAM_CONFIG.get("send_status_updates", True):
+            now = datetime.now()
+            # Only send status updates during trading hours (9 AM - 10 PM)
+            if 9 <= now.hour < 22:
                 await send_telegram_message(
                     self.monitor.format_status_message()
                 )
@@ -349,32 +410,54 @@ class TradingBot:
             "total_profit": total_profit,
         }
 
-    async def _graceful_shutdown(self) -> None:
+    async def _graceful_shutdown(self):
         """Handle graceful shutdown of the bot"""
+        logger.info("Graceful shutdown initiated")
+        
+        # Close any open positions if configured to do so
+        if TRADING_CONFIG.get("close_positions_on_shutdown", False):
+            logger.info("Closing all positions on shutdown")
+            try:
+                # TODO: Implement position closing logic
+                pass
+            except Exception as e:
+                logger.error(f"Error closing positions: {e}")
+        
+        # Update final status
         try:
-            logger.info(
-                "Performing graceful shutdown...",
-                active_trades=len(self.position_manager.active_trades),
-            )
-
-            # Cancel pending orders
-            await self.position_manager.cancel_all_orders()
-
-            # Save active trades
-            await self.position_manager.graceful_shutdown()
-
-            # Calculate total uptime
-            uptime = datetime.now() - self.start_time
-            hours = uptime.total_seconds() / 3600
-
-            logger.info(
-                "Graceful shutdown completed",
-                uptime_hours=round(hours, 2),
-                shutdown_time=datetime.now().isoformat(),
-            )
-
+            await self.update_status()
         except Exception as e:
-            logger.error(f"Error during graceful shutdown: {e}", exc_info=True)
+            logger.error(f"Error updating final status: {e}")
+        
+        # Perform final data sync
+        try:
+            logger.info("Performing final data sync before shutdown")
+            await self.data_sync.sync_all()
+        except Exception as e:
+            logger.error(f"Error during final data sync: {e}")
+        
+        # Close database connections
+        try:
+            if self.redis:
+                self.redis.close()
+            if self.postgres:
+                self.postgres.close()
+            logger.info("Database connections closed")
+        except Exception as e:
+            logger.error(f"Error closing database connections: {e}")
+            
+        # Log final message
+        logger.info(
+            "Trading bot shutdown complete",
+            uptime_hours=round((datetime.now() - self.start_time).total_seconds() / 3600, 2),
+        )
+        
+        # Send shutdown notification
+        if TELEGRAM_CONFIG["enabled"]:
+            try:
+                await send_telegram_message("🔴 Trading bot shutdown")
+            except Exception as e:
+                logger.error(f"Error sending shutdown notification: {e}")
 
     @handle_exchange_errors(notify=True)
     async def run(self) -> None:
@@ -388,26 +471,20 @@ class TradingBot:
         if TELEGRAM_CONFIG["enabled"]:
             await send_telegram_message("🤖 Trading bot started")
 
-        # Get configured intervals
-        check_interval = SYSTEM_CONFIG.get("main_loop_interval_seconds", 60)
-        status_update_interval = SYSTEM_CONFIG.get("status_update_interval_seconds", 3600)
-        health_check_interval = SYSTEM_CONFIG.get("health_check_interval_seconds", 300)
+        # Get check interval from config
+        check_interval = SYSTEM_CONFIG.get("check_interval", 60)  # Default: 60 seconds
 
-        logger.info(
-            "Using intervals (seconds)",
-            main_loop=check_interval,
-            status_update=status_update_interval,
-            health_check=health_check_interval,
-        )
+        # Set up event loop and signal handlers
+        loop = asyncio.get_event_loop()
 
-        # Register signal handlers
         def signal_handler(signum, frame):
-            logger.info(
-                f"Received signal {signum}, shutting down...", signal=signum
-            )
-            # Create a new event loop for the shutdown process
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            """Handle termination signals"""
+            logger.info(f"Received signal {signum}, shutting down...")
+            
+            # Cancel all tasks
+            for task in asyncio.all_tasks(loop):
+                task.cancel()
+            
             # Run the shutdown process
             loop.run_until_complete(self._graceful_shutdown())
             loop.close()
@@ -469,8 +546,34 @@ class TradingBot:
                         active_trades=active_trade_count,
                         max_trades=max_trades,
                     )
-
-                    for pair_config in TRADING_PAIRS:
+                    
+                    # Check Redis for cached signals first
+                    prioritized_pairs = []
+                    regular_pairs = []
+                    
+                    if self.redis and self.redis.is_connected():
+                        try:
+                            # Get buy signals from Redis
+                            for pair_config in TRADING_PAIRS:
+                                symbol = pair_config["symbol"]
+                                signal_data = self.redis.get_signal(symbol)
+                                
+                                if signal_data and signal_data.get("signal") == "buy" and signal_data.get("confidence", 0) >= STRATEGY_CONFIG.get("min_confidence", 0.7):
+                                    # Add to prioritized pairs if we have a recent buy signal
+                                    prioritized_pairs.append(pair_config)
+                                else:
+                                    # Otherwise add to regular pairs
+                                    regular_pairs.append(pair_config)
+                        except Exception as e:
+                            logger.error(f"Error getting signals from Redis: {e}")
+                            # Fall back to regular processing
+                            regular_pairs = TRADING_PAIRS
+                    else:
+                        # No Redis connection, use regular processing
+                        regular_pairs = TRADING_PAIRS
+                    
+                    # Process prioritized pairs first, then regular pairs
+                    for pair_config in prioritized_pairs + regular_pairs:
                         # Skip if we've reached max open trades
                         if (
                             len(self.position_manager.active_trades)

@@ -51,20 +51,26 @@ Konfigurasi terkait sistem dan koneksi.
 - **`connection_timeout`**: Waktu timeout koneksi (detik).
 - **`read_timeout`**: Waktu timeout membaca respons (detik).
 - **`retry_count`**: Jumlah percobaan ulang jika terjadi error koneksi/request.
-- **`redis_host`**: Host Redis server (default: "redis").
-- **`redis_port`**: Port Redis server (default: 6379).
-- **`redis_password`**: Password Redis server (diambil dari environment variable).
-- **`redis_db`**: Nomor database Redis (default: 0).
-- **`postgres_host`**: Host PostgreSQL server (default: "postgres").
-- **`postgres_port`**: Port PostgreSQL server (default: 5432).
-- **`postgres_user`**: Username PostgreSQL (diambil dari environment variable).
-- **`postgres_password`**: Password PostgreSQL (diambil dari environment variable).
-- **`postgres_db`**: Nama database PostgreSQL (default: "tradingdb").
 - **`retry_delay`**: Jeda waktu antar percobaan ulang (detik).
 - **`rate_limit_buffer`**: Persentase buffer untuk rate limit API (misal: 0.8 = gunakan 80% dari limit).
-- **`main_loop_interval_seconds`**: The target duration (in seconds) for each main processing cycle. The bot will sleep at the end of each cycle to meet this target duration.
-- **`status_update_interval_seconds`**: How frequently (in seconds) the bot logs a detailed status update (e.g., 3600 for every hour).
-- **`health_check_interval_seconds`**: How frequently (in seconds) the bot checks the exchange connection and system health (e.g., 300 for every 5 minutes).
+- **`main_loop_interval_seconds`**: Durasi target (dalam detik) untuk setiap siklus pemrosesan utama. Bot akan tidur di akhir setiap siklus untuk memenuhi durasi target ini.
+- **`status_update_interval_seconds`**: Seberapa sering (dalam detik) bot mencatat pembaruan status terperinci (misal: 3600 untuk setiap jam).
+- **`health_check_interval_seconds`**: Seberapa sering (dalam detik) bot memeriksa koneksi exchange dan kesehatan sistem (misal: 300 untuk setiap 5 menit).
+- **`data_sync_interval`**: Interval (dalam detik) untuk sinkronisasi data antara Redis dan PostgreSQL (default: 3600 = 1 jam).
+
+#### Redis Configuration:
+- **`redis_host`**: Host Redis server (default: "redis").
+- **`redis_port`**: Port Redis server (default: 6379).
+- **`redis_password`**: Password Redis server (diambil dari environment variable `REDIS_PASSWORD`).
+- **`redis_db`**: Nomor database Redis (default: 0).
+- **`redis_expiry_seconds`**: Waktu kedaluwarsa (dalam detik) untuk data yang disimpan di Redis (default: 86400 = 1 hari).
+
+#### PostgreSQL Configuration:
+- **`postgres_host`**: Host PostgreSQL server (default: "postgres").
+- **`postgres_port`**: Port PostgreSQL server (default: 5432).
+- **`postgres_user`**: Username PostgreSQL (diambil dari environment variable `POSTGRES_USER`).
+- **`postgres_password`**: Password PostgreSQL (diambil dari environment variable `POSTGRES_PASSWORD`).
+- **`postgres_db`**: Nama database PostgreSQL (default: "tradingdb").
 
 ### e. `LOGGING_CONFIG` (Dict)
 Konfigurasi logging aplikasi.
@@ -99,6 +105,10 @@ File ini berisi kredensial dan API keys yang tidak boleh dimasukkan ke dalam ver
 - **`EXCHANGE_API_SECRET`**: API secret untuk exchange.
 - **`TELEGRAM_BOT_TOKEN`**: Token bot Telegram untuk notifikasi.
 - **`TELEGRAM_CHAT_ID`**: ID chat Telegram untuk mengirim notifikasi.
+- **`REDIS_PASSWORD`**: Password untuk koneksi Redis.
+- **`POSTGRES_USER`**: Username untuk koneksi PostgreSQL.
+- **`POSTGRES_PASSWORD`**: Password untuk koneksi PostgreSQL.
+- **`POSTGRES_DB`**: Nama database PostgreSQL.
 - **`REDIS_PASSWORD`**: Password untuk Redis server.
 - **`POSTGRES_USER`**: Username untuk PostgreSQL.
 - **`POSTGRES_PASSWORD`**: Password untuk PostgreSQL.

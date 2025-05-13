@@ -52,11 +52,13 @@ awan-t-bot/
 - **`structured_logger.py`**: Structured logging for debugging and monitoring.
 - **`rate_limiter.py`**: Prevents API rate limit violations.
 - **`telegram_utils.py`**: Telegram notification integration.
-- **`redis_manager.py`**: Manages Redis connection and operations for caching OHLCV data and indicators.
+- **`redis_manager.py`**: Manages Redis connection and operations for caching OHLCV data, indicators, and trading signals.
+- **`postgres_manager.py`**: Handles PostgreSQL database operations for long-term data storage.
+- **`data_sync.py`**: Synchronizes data between Redis (short-term cache) and PostgreSQL (long-term storage).
 
 ### g. Data Persistence
-- **Redis**: In-memory database with persistence for caching OHLCV data and indicators.
-- **PostgreSQL with TimescaleDB**: Time-series database for long-term storage of trading data, performance metrics, and historical analysis.
+- **Redis**: In-memory database with persistence for caching OHLCV data, indicators, and trading signals. Provides fast access to frequently used data and reduces API calls to exchanges.
+- **PostgreSQL with TimescaleDB**: Time-series database for long-term storage of trading data, performance metrics, and historical analysis. Enables comprehensive backtesting and performance analysis.
 
 ### g. Tests (`tests/`)
 - Unit and integration tests for core logic, strategies, and utilities.
@@ -65,12 +67,15 @@ awan-t-bot/
 
 ## 3. Data Flow & Interaction
 
-1. **Initialization**: `bot.py` loads configuration, initializes exchange connector, strategy, and position manager.
-2. **Main Loop**: The bot fetches market data, runs strategy logic to generate signals, and manages positions/orders accordingly.
-3. **Signal Generation**: Strategies process price data and indicators to decide buy/sell/hold.
-4. **Order Management**: Position manager and exchange connector handle order placement, updates, and closing.
-5. **Monitoring & Logging**: Status and trade events are logged, and notifications sent if enabled.
-6. **Error Handling**: All major operations are wrapped with error handling and logging for reliability.
+1. **Initialization**: `bot.py` loads configuration, initializes exchange connector, strategy, position manager, Redis, and PostgreSQL connections.
+2. **Data Caching**: The bot first checks Redis for cached OHLCV data and indicators before calling exchange APIs.
+3. **Main Loop**: The bot fetches market data, runs strategy logic to generate signals, and manages positions/orders accordingly.
+4. **Signal Generation**: Strategies process price data and indicators to decide buy/sell/hold.
+5. **Signal Storage**: Trading signals are stored in Redis for quick access and prioritization of trading pairs.
+6. **Order Management**: Position manager and exchange connector handle order placement, updates, and closing.
+7. **Data Synchronization**: Periodically, data is synchronized between Redis (cache) and PostgreSQL (persistent storage).
+8. **Monitoring & Logging**: Status and trade events are logged, and notifications sent if enabled.
+9. **Error Handling**: All major operations are wrapped with error handling and logging for reliability.
 
 ---
 
@@ -89,8 +94,14 @@ awan-t-bot/
    v
 [trading_bot.py] <--> [position_manager.py]
    |                        |
+   |                        v
+   |                  [exchange connector]
+   |                        |
    v                        v
-[strategy (signal)]     [exchange connector]
+[strategy (signal)] <--> [redis_manager] <--> [postgres_manager]
+   |                        |                       |
+   |                        v                       v
+   |                  [data_sync] -------------> [PostgreSQL]
    |                        |
    v                        v
 [utils: logging, status, error handling]
