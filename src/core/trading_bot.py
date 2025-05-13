@@ -177,10 +177,14 @@ class TradingBot:
                 if self.redis and self.redis.is_connected():
                     try:
                         df = self.redis.get_ohlcv(symbol, timeframe)
-                        if df is not None and not df.empty and 'close' in df.columns:
-                            logger.debug(f"Using cached OHLCV data for {symbol} {timeframe} from Redis")
-                            ohlcv_data[timeframe] = df
-                            continue  # Lanjut ke timeframe berikutnya jika berhasil
+                        if df is not None and not df.empty:
+                            # Verifikasi format data
+                            if self._validate_and_fix_ohlcv(df, symbol, timeframe, "Redis"):
+                                logger.debug(f"Using cached OHLCV data for {symbol} {timeframe} from Redis")
+                                ohlcv_data[timeframe] = df
+                                continue  # Lanjut ke timeframe berikutnya jika berhasil
+                            else:
+                                logger.warning(f"Invalid OHLCV format from Redis for {symbol} {timeframe}")
                     except Exception as e:
                         logger.error(f"Error getting OHLCV data from Redis: {e}")
                         df = None
@@ -189,27 +193,24 @@ class TradingBot:
                 try:
                     df = await self.exchange.fetch_ohlcv(symbol, timeframe)
                     if df is not None and not df.empty:
-                        # Debug kolom DataFrame
-                        logger.debug(f"DataFrame columns for {symbol} {timeframe}: {df.columns.tolist()}")
-                        
-                        # Pastikan df memiliki kolom yang diharapkan
-                        if 'close' in df.columns:
+                        # Verifikasi format data
+                        if self._validate_and_fix_ohlcv(df, symbol, timeframe, "Exchange"):
                             ohlcv_data[timeframe] = df
                             logger.debug(f"Fetched OHLCV data for {symbol} {timeframe} from exchange")
                             
                             # Cache in Redis for future use
                             if self.redis and self.redis.is_connected():
                                 try:
-                                    self.redis.save_ohlcv(symbol, timeframe, df)
+                                    self.redis.store_ohlcv(symbol, timeframe, df)
                                     logger.debug(f"Cached OHLCV data for {symbol} {timeframe} in Redis")
                                 except Exception as e:
                                     logger.error(f"Error caching OHLCV data in Redis: {e}")
                         else:
-                            logger.error(f"DataFrame for {symbol} {timeframe} missing 'close' column: {df.columns}")
+                            logger.error(f"Invalid OHLCV format from Exchange for {symbol} {timeframe}")
                     else:
-                        logger.warning(f"Empty DataFrame returned for {symbol} {timeframe}")
+                        logger.warning(f"Empty OHLCV data for {symbol} {timeframe} from Exchange")
                 except Exception as e:
-                    logger.error(f"Error fetching OHLCV data for {symbol} {timeframe}: {e}")
+                    logger.error(f"Error fetching OHLCV data from exchange: {e}", exc_info=True)
         
             # Jika tidak ada data yang berhasil diambil, keluar
             if not ohlcv_data:
