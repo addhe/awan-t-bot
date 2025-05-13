@@ -112,7 +112,160 @@ Untuk melihat semua komponen dan sistem bot berjalan dengan lengkap:
    - Jalankan sinkronisasi manual: `python src/utils/data_sync.py`
    - Pastikan kedua database terhubung dengan benar
 
-### d. Catatan Penting
+### d. Troubleshooting Docker
+
+1. **Masalah Permission pada Log File**:
+   Jika Anda melihat error seperti berikut:
+   ```
+   ./run.sh: line XX: /app/logs/trading_bot.log: Permission denied
+   ```
+   Solusi:
+   ```bash
+   # Masuk ke server dan jalankan:
+   sudo mkdir -p /path/to/awan-t-bot/logs
+   sudo chmod -R 777 /path/to/awan-t-bot/logs
+   
+   # Atau jika menggunakan docker-compose:
+   docker-compose down
+   sudo mkdir -p ./logs
+   sudo chmod -R 777 ./logs
+   docker-compose up -d
+   ```
+
+2. **Command Not Found dalam Container**:
+   Jika Anda melihat error seperti:
+   ```
+   ./run.sh: line XX: pgrep: command not found
+   ```
+   Solusi:
+   ```bash
+   # Modifikasi Dockerfile untuk menambahkan package yang diperlukan
+   # Tambahkan baris berikut ke Dockerfile:
+   RUN apt-get update && apt-get install -y procps
+   
+   # Kemudian rebuild container:
+   docker-compose build
+   docker-compose up -d
+   ```
+
+3. **Container Restart Terus-menerus**:
+   - Cek logs untuk error: `docker-compose logs -f trading-bot`
+   - Pastikan semua environment variables terkonfigurasi dengan benar di `.env`
+   - Pastikan volume mounts memiliki permission yang benar
+
+4. **Permission Denied pada File Status**:
+   Jika Anda melihat error seperti:
+   ```
+   PermissionError: [Errno 13] Permission denied: 'status/confidence_levels.json'
+   PermissionError: [Errno 13] Permission denied: 'status/active_trades.json'
+   ```
+   Solusi:
+   ```bash
+   # Buat direktori status jika belum ada
+   mkdir -p status
+   
+   # Berikan permission penuh
+   chmod -R 777 status
+   
+   # Restart container bot
+   docker-compose restart trading-bot
+   ```
+   
+   Pastikan semua direktori yang di-mount ke container memiliki permission yang benar:
+   ```bash
+   # Berikan permission untuk semua direktori yang digunakan bot
+   chmod -R 777 logs status data
+   ```
+
+5. **Bot Tidak Berjalan di Docker**:
+   Jika `status_check.py` menunjukkan bot berstatus running tetapi tidak ada proses Python yang berjalan:
+   
+   ```bash
+   # Periksa apakah bot berjalan
+   docker exec -it awan-trading-bot ps aux | grep python
+   
+   # Jika tidak ada hasil, periksa log untuk error
+   docker exec -it awan-trading-bot tail -n 100 /app/logs/trading_bot.log
+   ```
+   
+   Jika Anda melihat error seperti `pgrep: command not found`:
+   ```bash
+   # Tambahkan baris ini ke Dockerfile
+   RUN apt-get update && apt-get install -y procps
+   
+   # Rebuild dan restart container
+   docker-compose build
+   docker-compose up -d
+   ```
+   
+   Jika bot terus crash dan restart:
+   ```bash
+   # Periksa log untuk error spesifik
+   docker exec -it awan-trading-bot tail -n 200 /app/logs/trading_bot.log
+   
+   # Reset restart counter dengan restart container
+   docker-compose restart trading-bot
+   ```
+
+6. **ImportError untuk Redis atau PostgreSQL**:
+   Jika Anda melihat error seperti:
+   ```
+   ImportError: cannot import name 'REDIS_CONFIG' from 'config.settings'
+   ImportError: cannot import name 'POSTGRES_CONFIG' from 'config.settings'
+   ```
+   
+   Ini berarti konfigurasi Redis atau PostgreSQL belum ditambahkan ke file `config/settings.py`. Solusi:
+   
+   ```bash
+   # Edit file settings.py dan tambahkan konfigurasi Redis dan PostgreSQL
+   nano config/settings.py
+   ```
+   
+   Tambahkan kode berikut sebelum CONFIG dictionary:
+   
+   ```python
+   # Redis configuration
+   REDIS_CONFIG = {
+       "host": os.getenv("REDIS_HOST", "localhost"),
+       "port": int(os.getenv("REDIS_PORT", "6379")),
+       "password": os.getenv("REDIS_PASSWORD", ""),
+       "db": int(os.getenv("REDIS_DB", "0")),
+       "decode_responses": True,
+       "socket_timeout": 5,
+       "socket_connect_timeout": 5,
+       "retry_on_timeout": True,
+       "health_check_interval": 30,
+   }
+   
+   # PostgreSQL configuration
+   POSTGRES_CONFIG = {
+       "host": os.getenv("POSTGRES_HOST", "localhost"),
+       "port": int(os.getenv("POSTGRES_PORT", "5432")),
+       "user": os.getenv("POSTGRES_USER", "postgres"),
+       "password": os.getenv("POSTGRES_PASSWORD", ""),
+       "database": os.getenv("POSTGRES_DB", "tradingdb"),
+       "sslmode": os.getenv("POSTGRES_SSLMODE", "disable"),
+       "application_name": "awan-trading-bot",
+       "connect_timeout": 10,
+   }
+   ```
+   
+   Dan perbarui CONFIG dictionary:
+   
+   ```python
+   CONFIG = {
+       # ... konfigurasi lainnya ...
+       "redis": REDIS_CONFIG,
+       "postgres": POSTGRES_CONFIG,
+   }
+   ```
+   
+   Kemudian restart container bot:
+   ```bash
+   docker-compose restart trading-bot
+   ```
+
+### e. Catatan Penting
 
 Mengingat strategi trading konservatif dengan Bollinger Bands + Stochastic RSI dan parameter min_confidence 0.7 (70%), normal jika bot tidak melakukan banyak trading dalam waktu singkat. Bot ini dirancang untuk mengutamakan kualitas sinyal dibanding kuantitas trading, sehingga mungkin tidak ada aktivitas trading selama beberapa jam.
 

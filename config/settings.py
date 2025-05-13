@@ -105,6 +105,31 @@ EXCHANGE_CONFIG = {
     "testnet": os.getenv("USE_TESTNET", "False").lower() == "true",
 }
 
+# Redis configuration
+REDIS_CONFIG = {
+    "host": os.getenv("REDIS_HOST", "localhost"),
+    "port": int(os.getenv("REDIS_PORT", "6379")),
+    "password": os.getenv("REDIS_PASSWORD", ""),
+    "db": int(os.getenv("REDIS_DB", "0")),
+    "decode_responses": True,
+    "socket_timeout": 5,
+    "socket_connect_timeout": 5,
+    "retry_on_timeout": True,
+    "health_check_interval": 30,
+}
+
+# PostgreSQL configuration
+POSTGRES_CONFIG = {
+    "host": os.getenv("POSTGRES_HOST", "localhost"),
+    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+    "user": os.getenv("POSTGRES_USER", "postgres"),
+    "password": os.getenv("POSTGRES_PASSWORD", ""),
+    "database": os.getenv("POSTGRES_DB", "tradingdb"),
+    "sslmode": os.getenv("POSTGRES_SSLMODE", "disable"),
+    "application_name": "awan-trading-bot",
+    "connect_timeout": 10,
+}
+
 # Default configuration
 CONFIG = {
     "trading_pairs": TRADING_PAIRS,
@@ -114,4 +139,6 @@ CONFIG = {
     "logging": LOGGING_CONFIG,
     "telegram": TELEGRAM_CONFIG,
     "exchange": EXCHANGE_CONFIG,
+    "redis": REDIS_CONFIG,
+    "postgres": POSTGRES_CONFIG,
 }
