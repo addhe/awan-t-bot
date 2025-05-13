@@ -213,9 +213,7 @@ class TradingBot:
             current_price = await self.exchange.get_current_price(symbol)
 
             # Analyze for signals
-            signal, confidence, indicators = self.strategy.analyze(
-                symbol, ohlcv_data, current_price
-            )
+            signal, confidence, indicators = self.strategy.analyze_signals(ohlcv_data)
 
             # Save signal to Redis
             if self.redis and self.redis.is_connected():
