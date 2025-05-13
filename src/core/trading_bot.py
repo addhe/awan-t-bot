@@ -375,6 +375,40 @@ class TradingBot:
             now = datetime.now()
             # Only send status updates during trading hours (9 AM - 10 PM)
             if 9 <= now.hour < 22:
+                # Ensure we have the latest data before sending the message
+                # First update the status metrics with latest data
+                self.monitor.update_status_metrics({
+                    "uptime_hours": round((datetime.now() - self.start_time).total_seconds() / 3600, 2),
+                    "active_trades": len(active_trades),
+                    "last_updated": datetime.now().isoformat(),
+                })
+                
+                # Make sure active trades are updated with latest prices
+                active_trades_with_prices = {}
+                for symbol, trade_data in active_trades.items():
+                    # Get the latest price from position manager
+                    current_price = trade_data.get('current_price')
+                    entry_price = trade_data.get('entry_price')
+                    
+                    # Calculate PnL if we have both prices
+                    pnl = 0.0
+                    if current_price and entry_price:
+                        try:
+                            pnl = round(((float(current_price) - float(entry_price)) / float(entry_price)) * 100, 2)
+                        except (ValueError, TypeError, ZeroDivisionError) as e:
+                            logger.error(f"Error calculating PnL for {symbol}: {e}")
+                    
+                    # Create updated trade data
+                    active_trades_with_prices[symbol] = {
+                        **trade_data,
+                        'current_price': current_price,
+                        'pnl': pnl
+                    }
+                
+                # Update active trades with latest prices
+                self.monitor.update_active_trades(active_trades_with_prices)
+                
+                # Now send the message with updated data
                 await send_telegram_message(
                     self.monitor.format_status_message()
                 )
