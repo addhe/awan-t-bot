@@ -107,7 +107,7 @@ EXCHANGE_CONFIG = {
 
 # Redis configuration
 REDIS_CONFIG = {
-    "host": os.getenv("REDIS_HOST", "localhost"),
+    "host": os.getenv("REDIS_HOST", "trading-redis"),  # Nama container Redis di docker-compose
     "port": int(os.getenv("REDIS_PORT", "6379")),
     "password": os.getenv("REDIS_PASSWORD", ""),
     "db": int(os.getenv("REDIS_DB", "0")),
@@ -120,7 +120,7 @@ REDIS_CONFIG = {
 
 # PostgreSQL configuration
 POSTGRES_CONFIG = {
-    "host": os.getenv("POSTGRES_HOST", "localhost"),
+    "host": os.getenv("POSTGRES_HOST", "trading-postgres"),  # Nama container PostgreSQL di docker-compose
     "port": int(os.getenv("POSTGRES_PORT", "5432")),
     "user": os.getenv("POSTGRES_USER", "postgres"),
     "password": os.getenv("POSTGRES_PASSWORD", ""),
