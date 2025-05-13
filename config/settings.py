@@ -45,6 +45,8 @@ TRADING_CONFIG = {
     "take_profit_pct": 0.03,  # 3% take profit
     "trailing_stop_pct": 0.01,  # 1% trailing stop
     "trailing_stop_activation_pct": 0.01,  # Activate trailing stop after 1% profit
+    "disable_stop_loss": True,  # Set to True untuk menonaktifkan stop loss
+    "min_profit_pct": 0.03,  # Minimum profit untuk close position jika stop loss dinonaktifkan
 }
 
 # System configuration

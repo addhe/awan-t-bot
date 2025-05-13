@@ -43,6 +43,8 @@ Parameter umum terkait eksekusi trading dan manajemen risiko.
 - **`take_profit_pct`**: Persentase take profit dari harga entry (misal: 0.03 = 3%).
 - **`trailing_stop_pct`**: Persentase trailing stop loss (misal: 0.01 = 1%).
 - **`trailing_stop_activation_pct`**: Persentase profit minimum sebelum trailing stop diaktifkan (misal: 0.01 = 1%).
+- **`disable_stop_loss`**: Boolean untuk menonaktifkan stop loss (default: False). Jika diaktifkan (True), bot hanya akan menjual ketika profit mencapai target minimum atau take profit.
+- **`min_profit_pct`**: Persentase profit minimum untuk menjual posisi ketika stop loss dinonaktifkan (misal: 0.03 = 3%).
 
 ### d. `SYSTEM_CONFIG` (Dict)
 Konfigurasi terkait sistem dan koneksi.

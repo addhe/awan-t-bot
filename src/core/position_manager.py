@@ -462,7 +462,7 @@ class PositionManager:
         if position_count == 0:
             logger.info("No active positions to check")
             return []
-            
+
         # Get excluded symbols from config
         excluded_symbols = self.trading_config.get("excluded_symbols", [])
 
@@ -548,8 +548,12 @@ class PositionManager:
                     # Update the trade with the calculated take_profit_price
                     trade["take_profit"] = take_profit_price
 
-                # If stop_loss is not set or 0, calculate it based on config
-                if trade.get("stop_loss", 0) == 0 and entry_price > 0:
+                # Check if stop loss is disabled in config
+                disable_stop_loss = self.config.get("disable_stop_loss", False)
+                min_profit_pct = self.config.get("min_profit_pct", 0.03)  # Default 3%
+
+                # If stop_loss is not set or 0 and stop loss is not disabled, calculate it based on config
+                if not disable_stop_loss and trade.get("stop_loss", 0) == 0 and entry_price > 0:
                     stop_loss_pct = self.config.get("stop_loss_pct", 0.02)  # Default 2%
                     stop_loss_price = entry_price * (1 - stop_loss_pct)
                     logger.info(
@@ -561,26 +565,42 @@ class PositionManager:
                     )
                     # Update the trade with the calculated stop_loss_price
                     trade["stop_loss"] = stop_loss_price
+                elif disable_stop_loss and trade.get("stop_loss", 0) > 0:
+                    # If stop loss was previously set but now disabled, remove it
+                    logger.info(
+                        f"Stop loss disabled in config, removing stop_loss for {symbol}",
+                        symbol=symbol
+                    )
+                    trade["stop_loss"] = 0
+
+                # Calculate current profit percentage
+                current_profit_pct = ((current_price / entry_price) - 1) if entry_price > 0 else 0
 
                 # Determine trigger conditions using potentially updated SL
                 stop_loss_triggered = (
-                    trade.get("stop_loss", 0) > 0
+                    not disable_stop_loss  # Only check stop loss if not disabled
+                    and trade.get("stop_loss", 0) > 0
                     and current_price <= trade.get("stop_loss", 0)
                 )
+
+                # For take profit, check if price reached take_profit level or minimum profit level if stop loss is disabled
                 take_profit_triggered = (
-                    trade.get("take_profit", 0) > 0
-                    and current_price >= trade.get("take_profit", 0)
+                    (trade.get("take_profit", 0) > 0 and current_price >= trade.get("take_profit", 0)) or
+                    (disable_stop_loss and current_profit_pct >= min_profit_pct)  # Close if profit >= min_profit_pct when stop loss disabled
                 )
 
                 # Close if TP/SL (potentially trailed) or strategy signal triggered
                 if should_sell or stop_loss_triggered or take_profit_triggered:
+                    # Check if this is a min_profit close when stop loss is disabled
+                    min_profit_close = disable_stop_loss and current_profit_pct >= min_profit_pct and not (trade.get("take_profit", 0) > 0 and current_price >= trade.get("take_profit", 0))
+
                     close_reason = (
                         "signal"
                         if should_sell
                         else (
                             "stop_loss"
                             if stop_loss_triggered
-                            else "take_profit"
+                            else ("min_profit" if min_profit_close else "take_profit")
                         )
                     )
 
@@ -589,6 +609,17 @@ class PositionManager:
                         logger.info(f"Closing {symbol} due to triggered Trailing Stop Loss at {stop_loss_price}",
                                     symbol=symbol, stop_loss_price=stop_loss_price)
                         # close_reason = "trailing_stop_loss" # Optional more specific reason
+
+                    # Log min profit close with more details
+                    if min_profit_close:
+                        logger.info(
+                            f"Closing {symbol} due to reaching minimum profit target",
+                            symbol=symbol,
+                            entry_price=entry_price,
+                            current_price=current_price,
+                            profit_pct=current_profit_pct,
+                            min_profit_pct=min_profit_pct
+                        )
 
                     result = await self.close_position(
                         symbol, close_reason=close_reason
