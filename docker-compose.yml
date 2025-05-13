@@ -49,20 +49,33 @@ services:
     depends_on:
       - redis
       - postgres
+    env_file:
+      - .env
     environment:
-      - REDIS_HOST=redis
+      # Redis configuration
+      - REDIS_HOST=trading-redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-StrongRedisPassword}
-      - POSTGRES_HOST=postgres
+      # PostgreSQL configuration
+      - POSTGRES_HOST=trading-postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-tradingdb}
+      # Binance API configuration
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - USE_TESTNET=${USE_TESTNET:-true}
+      # Telegram configuration
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      # Timezone
       - TZ=Asia/Jakarta
     volumes:
       - ./logs:/app/logs
       - ./status:/app/status
       - ./config:/app/config
+      - ./data:/app/data
     restart: unless-stopped
     networks:
       - trading-network
