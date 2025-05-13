@@ -319,9 +319,13 @@ class TradingBot:
                 # Execute buy order
                 trade_result = await self.position_manager.open_position(
                     symbol=symbol,
-                    entry_price=current_price,
                     quantity=position_size,
+                    risk_level={
+                        "stop_loss": pair_config.get("stop_loss", 0),
+                        "take_profit": pair_config.get("take_profit", 0),
+                    },
                     confidence=confidence,
+                    pair_config=pair_config
                 )
                 
                 if trade_result:
