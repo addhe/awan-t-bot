@@ -420,6 +420,38 @@ class TradingBot:
         # Update status file with always-updated prices
         self.monitor.update_active_trades(updated_trades)
         logger.info("[PATCH] Updated active_trades with latest prices before all status/telegram updates")
+
+        # --- PATCH: Always update status metrics, performance, and confidence before Telegram ---
+        # Update metrics (uptime, active_trades, total_balance)
+        uptime_hours = (datetime.now() - self.start_time).total_seconds() / 3600
+        try:
+            balances = await self.exchange.get_all_balances()
+            total_balance = sum(float(balance) for balance in balances.values())
+        except Exception as e:
+            logger.error(f"Error getting balances: {e}")
+            total_balance = 0
+        self.monitor.update_status_metrics({
+            "uptime_hours": round(uptime_hours, 2),
+            "active_trades": len(updated_trades),
+            "total_balance": round(total_balance, 2),
+            "last_updated": datetime.now().isoformat(),
+        })
+        # Update performance 24h
+        try:
+            performance_24h = self.monitor._calculate_performance(hours=24) if hasattr(self.monitor, '_calculate_performance') else None
+            if performance_24h:
+                self.monitor.update_status_metrics({"performance_24h": performance_24h})
+        except Exception as e:
+            logger.error(f"Error updating 24h performance: {e}")
+        # Update confidence levels (harusnya dari logic sinyal, fallback: tidak update jika tidak ada)
+        if hasattr(self.monitor, 'update_confidence_levels') and hasattr(self.monitor, 'get_confidence_levels'):
+            try:
+                latest_conf = self.monitor.get_confidence_levels() or {}
+                # Bisa tambahkan update_confidence_levels(latest_conf) jika ingin refresh timestamp
+                self.monitor.update_confidence_levels(latest_conf)
+            except Exception as e:
+                logger.error(f"Error updating confidence levels: {e}")
+        # --- END PATCH ---
         
         # Also save active trades to Redis for quick access
         if self.redis and self.redis.is_connected():
