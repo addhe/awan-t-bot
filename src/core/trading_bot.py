@@ -91,7 +91,7 @@ class TradingBot:
         self.redis = RedisManager(REDIS_CONFIG)
         self.postgres = PostgresManager(POSTGRES_CONFIG)
         self.data_sync = DataSyncManager()
-        
+
         # Log connection status
         redis_status = "connected" if self.redis.is_connected() else "disconnected"
         postgres_status = "connected" if self.postgres.is_connected() else "disconnected"
@@ -186,10 +186,10 @@ class TradingBot:
         # Get market data
         try:
             logger.debug(f"Analyzing {symbol} for trading signals", symbol=symbol)
-            
+
             # Buat dictionary untuk menyimpan data OHLCV dari berbagai timeframe
             ohlcv_data = {}
-        
+
             # Ambil data untuk setiap timeframe
             for timeframe in STRATEGY_CONFIG.get("timeframes", ["1h"]):
                 # Coba ambil dari Redis dulu
@@ -208,7 +208,7 @@ class TradingBot:
                     except Exception as e:
                         logger.error(f"Error getting OHLCV data from Redis: {e}")
                         df = None
-            
+
                 # Jika tidak ada di Redis atau format tidak valid, ambil dari exchange
                 try:
                     df = await self.exchange.fetch_ohlcv(symbol, timeframe)
@@ -217,7 +217,7 @@ class TradingBot:
                         if self._validate_and_fix_ohlcv(df, symbol, timeframe, "Exchange"):
                             ohlcv_data[timeframe] = df
                             logger.debug(f"Fetched OHLCV data for {symbol} {timeframe} from exchange")
-                            
+
                             # Cache in Redis for future use
                             if self.redis and self.redis.is_connected():
                                 try:
@@ -231,7 +231,7 @@ class TradingBot:
                         logger.warning(f"Empty OHLCV data for {symbol} {timeframe} from Exchange")
                 except Exception as e:
                     logger.error(f"Error fetching OHLCV data from exchange: {e}", exc_info=True)
-        
+
             # Jika tidak ada data yang berhasil diambil, keluar
             if not ohlcv_data:
                 logger.error(f"Failed to get OHLCV data for {symbol} from any timeframe")
@@ -241,18 +241,34 @@ class TradingBot:
             current_price = await self.exchange.get_current_price(symbol)
 
             # Analyze for signals
-        # Pastikan ohlcv_data dalam format yang diharapkan (dictionary dengan timeframes sebagai key)
-        if not ohlcv_data:
-            logger.error(f"No OHLCV data available for {symbol}")
-            return False
+            # Pastikan ohlcv_data dalam format yang diharapkan (dictionary dengan timeframes sebagai key)
+            if not ohlcv_data:
+                logger.error(f"No OHLCV data available for {symbol}")
+                return False
+
+            # Hitung indikator teknikal untuk setiap timeframe sebelum analisis
+            ohlcv_data_with_indicators = {}
+            for tf, df in ohlcv_data.items():
+                try:
+                    # Hitung indikator menggunakan metode calculate_indicators
+                    df_with_indicators = self.strategy.calculate_indicators(df, symbol, tf)
+                    if df_with_indicators is not None and not df_with_indicators.empty:
+                        # Pastikan semua indikator yang diperlukan ada
+                        required_indicators = ['close', 'bb_upper', 'bb_lower', 'bb_middle', 'ema', 'stoch_k', 'stoch_d']
+                        if all(indicator in df_with_indicators.columns for indicator in required_indicators):
+                            ohlcv_data_with_indicators[tf] = df_with_indicators
+                            logger.debug(f"Added indicators for {symbol} {tf}")
+                        else:
+                            missing = [ind for ind in required_indicators if ind not in df_with_indicators.columns]
+                            logger.error(f"Missing indicators for {symbol} {tf}: {missing}")
                 except Exception as e:
                     logger.error(f"Error calculating indicators for {symbol} {tf}: {e}")
-            
+
             # Jika tidak ada data dengan indikator, keluar
             if not ohlcv_data_with_indicators:
                 logger.error(f"Failed to calculate indicators for {symbol} from any timeframe")
                 return False
-                
+
             signal, confidence, indicators = self.strategy.analyze_signals(ohlcv_data_with_indicators)
 
             # Save signal to Redis
@@ -300,11 +316,11 @@ class TradingBot:
                 available_balance = await self.exchange.get_available_balance(
                     TRADING_CONFIG.get("quote_currency", "USDT")
                 )
-                
+
                 # Calculate position size
                 position_size, _ = self.strategy.calculate_position_size(
                         available_balance, current_price, pair_config, TRADING_CONFIG
-                    )              
+                    )
                 if position_size * current_price > available_balance:
                     logger.warning(
                         f"Insufficient balance for {symbol}",
@@ -313,7 +329,7 @@ class TradingBot:
                         available=available_balance,
                     )
                     return False
-                
+
                 # Execute buy order
                 trade_result = await self.position_manager.open_position(
                     symbol=symbol,
@@ -325,7 +341,7 @@ class TradingBot:
                     confidence=confidence,
                     pair_config=pair_config
                 )
-                
+
                 if trade_result:
                     logger.info(
                         f"Opened position for {symbol}",
@@ -334,7 +350,7 @@ class TradingBot:
                         quantity=position_size,
                         confidence=f"{confidence:.2f}",
                     )
-                    
+
                     # Send Telegram notification
                     if TELEGRAM_CONFIG["enabled"]:
                         await send_telegram_message(
@@ -343,7 +359,7 @@ class TradingBot:
                             f"Quantity: {position_size}\n"
                             f"Confidence: {confidence:.2f}"
                         )
-                    
+
                     return True
                 else:
                     logger.warning(
@@ -351,9 +367,9 @@ class TradingBot:
                         symbol=symbol,
                         entry_price=current_price,
                     )
-            
+
             return False
-            
+
         except Exception as e:
             logger.error(
                 f"Error processing {symbol}: {e}",
@@ -366,13 +382,13 @@ class TradingBot:
     async def update_status(self):
         """Update bot status and performance metrics"""
         current_time = time.time()
-        
+
         # Only update every 5 minutes to avoid too frequent updates
         if current_time - self.last_status_update < SYSTEM_CONFIG.get("status_update_interval", 300):
             return
-            
+
         self.last_status_update = current_time
-        
+
         # Get active trades
         active_trades = self.position_manager.active_trades
 
@@ -464,7 +480,7 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error sending Telegram message: {e}")
         # --- END PATCH ---
-        
+
         # Also save active trades to Redis for quick access
         if self.redis and self.redis.is_connected():
             try:
@@ -474,11 +490,11 @@ class TradingBot:
                 logger.debug("Saved active trades to Redis")
             except Exception as e:
                 logger.error(f"Error saving active trades to Redis: {e}")
-        
+
         # Calculate uptime
         uptime = datetime.now() - self.start_time
         uptime_hours = uptime.total_seconds() / 3600
-        
+
         # Get balance
         try:
             balances = await self.exchange.get_all_balances()
@@ -486,7 +502,7 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error getting balances: {e}")
             total_balance = 0
-            
+
         # Update status metrics
         self.monitor.update_status_metrics({
             "uptime_hours": round(uptime_hours, 2),
@@ -494,34 +510,34 @@ class TradingBot:
             "total_balance": round(total_balance, 2),
             "last_updated": datetime.now().isoformat(),
         })
-        
+
         # Log status update
         logger.info(
             "Status updated",
             active_trades=len(active_trades),
             uptime_hours=round(uptime_hours, 2),
         )
-        
+
         # Sync data between Redis and PostgreSQL every hour
         sync_interval = SYSTEM_CONFIG.get("data_sync_interval", 3600)  # Default: 1 hour
         time_since_last_sync = (datetime.now() - self.last_data_sync).total_seconds()
-        
+
         if time_since_last_sync >= sync_interval:
             try:
                 logger.info("Starting data synchronization between Redis and PostgreSQL")
                 sync_results = await self.data_sync.sync_all()
-                
+
                 # Log sync results
                 success_count = sum(1 for result in sync_results.values() if result)
                 logger.info(
                     f"Data sync completed: {success_count}/{len(sync_results)} operations successful",
                     sync_results=sync_results
                 )
-                
+
                 self.last_data_sync = datetime.now()
             except Exception as e:
                 logger.error(f"Error during data synchronization: {e}")
-                
+
         # Send status update via Telegram if enabled
         if TELEGRAM_CONFIG["enabled"] and TELEGRAM_CONFIG.get("send_status_updates", True):
             now = datetime.now()
@@ -534,7 +550,7 @@ class TradingBot:
                     "active_trades": len(active_trades),
                     "last_updated": datetime.now().isoformat(),
                 })
-                
+
                 # Make sure active trades are updated with latest prices
                 active_trades_with_prices = {}
                 for symbol, trade_data in active_trades.items():
@@ -542,7 +558,7 @@ class TradingBot:
                     if not entry_price:
                         logger.warning(f"Missing entry price for {symbol}")
                         continue
-                        
+
                     # First try to get current price from Redis
                     current_price = None
                     if self.redis and self.redis.is_connected():
@@ -556,7 +572,7 @@ class TradingBot:
                                     break
                         except Exception as e:
                             logger.error(f"Error getting price from Redis for {symbol}: {e}")
-                    
+
                     # If not found in Redis, fetch from exchange
                     if current_price is None:
                         try:
@@ -565,7 +581,7 @@ class TradingBot:
                         except Exception as e:
                             logger.error(f"Error fetching price for {symbol} from exchange: {e}")
                             current_price = trade_data.get('current_price')  # Fallback to existing price
-                    
+
                     # Calculate PnL if we have both prices
                     pnl = 0.0
                     if current_price and entry_price:
@@ -573,14 +589,14 @@ class TradingBot:
                             pnl = round(((float(current_price) - float(entry_price)) / float(entry_price)) * 100, 2)
                         except (ValueError, TypeError, ZeroDivisionError) as e:
                             logger.error(f"Error calculating PnL for {symbol}: {e}")
-                    
+
                     # Create updated trade data
                     active_trades_with_prices[symbol] = {
                         **trade_data,
                         'current_price': current_price,
                         'pnl': pnl
                     }
-                    
+
                     # Also save to Redis for quick access
                     if self.redis and self.redis.is_connected() and current_price:
                         try:
@@ -593,10 +609,10 @@ class TradingBot:
                             self.redis.redis.expire(redis_key, 60 * 60 * 24)  # 1 day expiration
                         except Exception as e:
                             logger.error(f"Error saving trade price to Redis for {symbol}: {e}")
-                
+
                 # Update active trades with latest prices
                 self.monitor.update_active_trades(active_trades_with_prices)
-                
+
                 # Now send the message with updated data
                 await send_telegram_message(
                     self.monitor.format_status_message()
@@ -636,7 +652,7 @@ class TradingBot:
     async def _graceful_shutdown(self):
         """Handle graceful shutdown of the bot"""
         logger.info("Graceful shutdown initiated")
-        
+
         # Close any open positions if configured to do so
         if TRADING_CONFIG.get("close_positions_on_shutdown", False):
             logger.info("Closing all positions on shutdown")
@@ -645,20 +661,20 @@ class TradingBot:
                 pass
             except Exception as e:
                 logger.error(f"Error closing positions: {e}")
-        
+
         # Update final status
         try:
             await self.update_status()
         except Exception as e:
             logger.error(f"Error updating final status: {e}")
-        
+
         # Perform final data sync
         try:
             logger.info("Performing final data sync before shutdown")
             await self.data_sync.sync_all()
         except Exception as e:
             logger.error(f"Error during final data sync: {e}")
-        
+
         # Close database connections
         try:
             if self.redis:
@@ -668,13 +684,13 @@ class TradingBot:
             logger.info("Database connections closed")
         except Exception as e:
             logger.error(f"Error closing database connections: {e}")
-            
+
         # Log final message
         logger.info(
             "Trading bot shutdown complete",
             uptime_hours=round((datetime.now() - self.start_time).total_seconds() / 3600, 2),
         )
-        
+
         # Send shutdown notification
         if TELEGRAM_CONFIG["enabled"]:
             try:
@@ -703,11 +719,11 @@ class TradingBot:
         def signal_handler(signum, frame):
             """Handle termination signals"""
             logger.info(f"Received signal {signum}, shutting down...")
-            
+
             # Cancel all tasks
             for task in asyncio.all_tasks(loop):
                 task.cancel()
-            
+
             # Run the shutdown process
             loop.run_until_complete(self._graceful_shutdown())
             loop.close()
@@ -769,18 +785,18 @@ class TradingBot:
                         active_trades=active_trade_count,
                         max_trades=max_trades,
                     )
-                    
+
                     # Check Redis for cached signals first
                     prioritized_pairs = []
                     regular_pairs = []
-                    
+
                     if self.redis and self.redis.is_connected():
                         try:
                             # Get buy signals from Redis
                             for pair_config in TRADING_PAIRS:
                                 symbol = pair_config["symbol"]
                                 signal_data = self.redis.get_signal(symbol)
-                                
+
                                 if signal_data and signal_data.get("signal") == "buy" and signal_data.get("confidence", 0) >= STRATEGY_CONFIG.get("min_confidence", 0.7):
                                     # Add to prioritized pairs if we have a recent buy signal
                                     prioritized_pairs.append(pair_config)
@@ -794,7 +810,7 @@ class TradingBot:
                     else:
                         # No Redis connection, use regular processing
                         regular_pairs = TRADING_PAIRS
-                    
+
                     # Process prioritized pairs first, then regular pairs
                     for pair_config in prioritized_pairs + regular_pairs:
                         # Skip if we've reached max open trades
