@@ -466,9 +466,12 @@ class TradingBot:
                 logger.error(f"Error updating confidence levels: {e}")
         # --- END PATCH ---
 
-        # --- PATCH: Update confidence in active trades ---
+        # --- PATCH: Update confidence in active trades and fix status metrics ---
         # Get latest confidence levels
         fresh_confidence = self.monitor.get_confidence_levels() if hasattr(self.monitor, 'get_confidence_levels') else {}
+
+        # Get current bot status
+        current_status = self.monitor.get_bot_status() if hasattr(self.monitor, 'get_bot_status') else {}
 
         # Update active trades with latest confidence
         updated_active_trades = {}
@@ -477,33 +480,39 @@ class TradingBot:
             symbol = trade.get('symbol')
             if symbol and symbol in fresh_confidence:
                 trade['confidence'] = fresh_confidence[symbol].get('confidence', 0.5)
-                updated_active_trades[symbol] = trade
-            elif symbol:
+            if symbol:
                 updated_active_trades[symbol] = trade
 
         # Update active trades with latest confidence
         if updated_active_trades:
-            # Convert the dictionary to the format expected by update_active_trades
-            # Method expects a dictionary or list of trades depending on implementation
             try:
-                # First try with dictionary (if method expects {symbol: trade_data})
+                # Method expects a dictionary with symbol as key
                 self.monitor.update_active_trades(updated_active_trades)
-                logger.info("[PATCH] Updated active trades with latest confidence levels (dict format)")
+                logger.info("[PATCH] Updated active trades with latest confidence levels")
             except Exception as e:
-                try:
-                    # If that fails, try with list (if method expects list of trades)
-                    self.monitor.update_active_trades(list(updated_active_trades.values()))
-                    logger.info("[PATCH] Updated active trades with latest confidence levels (list format)")
-                except Exception as e:
-                    logger.error(f"[PATCH] Failed to update active trades: {e}")
+                logger.error(f"[PATCH] Failed to update active trades: {e}")
 
         # Always update uptime and last_check right before sending message
         current_uptime = round((datetime.now() - self.start_time).total_seconds() / 3600, 2)
+
+        # Update both status metrics and health section for Telegram format
         self.monitor.update_status_metrics({
             "uptime_hours": current_uptime,
             "last_updated": datetime.now().isoformat(),
         })
-        logger.info(f"[PATCH] Updated uptime to {current_uptime} hours and last_check to now")
+
+        # Also update the health section directly for Telegram format
+        if current_status:
+            if 'health' not in current_status:
+                current_status['health'] = {}
+
+            current_status['health']['uptime'] = f"{current_uptime} hours"
+            current_status['health']['last_check'] = datetime.now().isoformat()
+            current_status['health']['is_running'] = True
+
+            # Update the full status
+            self.monitor.update_bot_status(current_status)
+            logger.info(f"[PATCH] Updated health section with uptime {current_uptime} hours and current timestamp")
 
         # Read fresh status after all updates
         # Format status message with latest data
