@@ -585,8 +585,13 @@ class TradingBot:
         # Send status update via Telegram if enabled
         if TELEGRAM_CONFIG["enabled"] and TELEGRAM_CONFIG.get("send_status_updates", True):
             now = datetime.now()
-            # Only send status updates during trading hours (9 AM - 10 PM)
-            if 9 <= now.hour < 22:
+            # Get status update hours from config or use defaults
+            status_hours = TELEGRAM_CONFIG.get("status_update_hours", {"start": 7, "end": 21})
+            start_hour = status_hours.get("start", 7)  # Default: 7 AM
+            end_hour = status_hours.get("end", 21)     # Default: 9 PM
+
+            # Only send status updates during configured hours
+            if start_hour <= now.hour < end_hour:
                 # Ensure we have the latest data before sending the message
                 # First update the status metrics with latest data
                 self.monitor.update_status_metrics({
