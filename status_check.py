@@ -420,6 +420,35 @@ async def async_main():
         print("❌ Bot status not found. Is the bot running?")
         sys.exit(1)
 
+    # --- PATCH: Selalu update confidence level untuk semua pair sebelum tampilkan status ---
+    from config.settings import TRADING_PAIRS, STRATEGY_CONFIG
+    from src.strategies.boll_stoch_strategy import BollStochStrategy
+    from src.exchange.connector import ExchangeConnector
+    exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
+    strategy = BollStochStrategy(**STRATEGY_CONFIG)
+    confidence_data = {}
+    for pair in TRADING_PAIRS:
+        symbol = pair["symbol"]
+        main_tf = pair.get("timeframes", ["1h"])[0]
+        try:
+            df = await exchange.fetch_ohlcv(symbol, main_tf)
+            if df is not None and not df.empty:
+                df_ind = strategy.calculate_indicators(df, symbol, main_tf)
+                should_buy, confidence, _ = strategy.should_buy(df_ind)
+                confidence_data[symbol] = {
+                    "confidence": confidence,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                print(f"[PATCH] Updated confidence for {symbol}: {confidence:.2f}")
+            else:
+                print(f"[PATCH] No OHLCV data for {symbol} {main_tf}")
+        except Exception as e:
+            print(f"[PATCH] Error updating confidence for {symbol}: {e}")
+    if confidence_data:
+        monitor.update_confidence_levels(confidence_data)
+        print(f"[PATCH] Saved confidence levels for {len(confidence_data)} pairs.")
+    # --- END PATCH ---
+
     # Extract confidence levels from logs
     await extract_confidence_from_logs(monitor)
     

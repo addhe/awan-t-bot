@@ -241,26 +241,10 @@ class TradingBot:
             current_price = await self.exchange.get_current_price(symbol)
 
             # Analyze for signals
-            # Pastikan ohlcv_data dalam format yang diharapkan (dictionary dengan timeframes sebagai key)
-            if not ohlcv_data:
-                logger.error(f"No OHLCV data available for {symbol}")
-                return False
-                
-            # Hitung indikator teknikal untuk setiap timeframe sebelum analisis
-            ohlcv_data_with_indicators = {}
-            for tf, df in ohlcv_data.items():
-                try:
-                    # Hitung indikator menggunakan metode calculate_indicators
-                    df_with_indicators = self.strategy.calculate_indicators(df, symbol, tf)
-                    if df_with_indicators is not None and not df_with_indicators.empty:
-                        # Pastikan semua indikator yang diperlukan ada
-                        required_indicators = ['close', 'bb_upper', 'bb_lower', 'bb_middle', 'ema', 'stoch_k', 'stoch_d']
-                        if all(indicator in df_with_indicators.columns for indicator in required_indicators):
-                            ohlcv_data_with_indicators[tf] = df_with_indicators
-                            logger.debug(f"Added indicators for {symbol} {tf}")
-                        else:
-                            missing = [ind for ind in required_indicators if ind not in df_with_indicators.columns]
-                            logger.error(f"Missing indicators for {symbol} {tf}: {missing}")
+        # Pastikan ohlcv_data dalam format yang diharapkan (dictionary dengan timeframes sebagai key)
+        if not ohlcv_data:
+            logger.error(f"No OHLCV data available for {symbol}")
+            return False
                 except Exception as e:
                     logger.error(f"Error calculating indicators for {symbol} {tf}: {e}")
             
@@ -295,6 +279,20 @@ class TradingBot:
                     tf: indicators.get(tf, {}) for tf in ohlcv_data.keys()
                 },
             )
+
+            # --- PATCH: Selalu update confidence level setelah analisa sinyal ---
+            confidence_data = {
+                symbol: {
+                    "confidence": confidence,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            }
+            try:
+                self.monitor.update_confidence_levels(confidence_data)
+                logger.info(f"[PATCH] Updated confidence level for {symbol}: {confidence:.2f}")
+            except Exception as e:
+                logger.error(f"[PATCH] Failed to update confidence level for {symbol}: {e}")
+            # --- END PATCH ---
 
             # Execute trade if signal is buy
             if signal == "buy" and confidence >= STRATEGY_CONFIG.get("min_confidence", 0.7):
