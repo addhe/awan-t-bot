@@ -391,18 +391,27 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
     # Combine all confidence data, preferring newer data
     all_confidence = {}
 
-    # Add Redis confidence first (if available)
-    for symbol, data in redis_confidence.items():
+    # --- PATCH: Prioritaskan fresh_confidence_data yang baru dihitung ---
+    # Add fresh confidence data first (highest priority)
+    for symbol, data in fresh_confidence_data.items():
         all_confidence[symbol] = data
+        print(f"Using fresh confidence data for {symbol}: {data['confidence']:.2f} (just calculated)")
+    # --- END PATCH ---
 
-    # Add stored confidence from file (if not already in Redis)
+    # Add Redis confidence (if not already added from fresh data)
+    for symbol, data in redis_confidence.items():
+        if symbol not in all_confidence:
+            all_confidence[symbol] = data
+
+    # Add stored confidence from file (if not already in Redis or fresh data)
     for symbol, data in stored_confidence.items():
         if symbol != "last_updated" and isinstance(data, dict) and symbol not in all_confidence:
             all_confidence[symbol] = data
 
-    # Add/update with log confidence (newest data)
+    # Add/update with log confidence (if not in fresh data)
     for symbol, data in log_confidence.items():
-        all_confidence[symbol] = data
+        if symbol not in all_confidence:
+            all_confidence[symbol] = data
 
     # Get trading pairs from config
     trading_pairs = STRATEGY_CONFIG.get("trading_pairs", [])
@@ -453,38 +462,54 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
             ", ".join(analyzed_timeframes)
         ])
 
-    # Display table
-    if table_data:
-        headers = ["Symbol", "Confidence", "Signals", "Timestamp", "Age", "Current Price", "Timeframes"]
-        print("\n🎯 Confidence Levels Report\n")
-        print(tabulate(table_data, headers=headers, tablefmt="pretty"))
-        print(f"\nAnalyzed logs from the past {hours} hour(s)")
+    # Print confidence levels table
+    print("\n🎯 Confidence Levels Report\n")
+    headers = ["Symbol", "Confidence", "Signals", "Timestamp", "Age", "Current Price", "Timeframes"]
 
-        # Min confidence threshold from config
-        min_confidence = STRATEGY_CONFIG.get("min_confidence", 0.7)
-        print(f"\nBot trading threshold: {min_confidence:.2f}")
+    # --- PATCH: Tambahkan info sumber data ---
+    for row in table_data:
+        symbol = row[0]
+        if symbol in fresh_confidence_data:
+            # Tandai data yang baru dihitung dengan emoji bintang
+            row[0] = f"{symbol} ⭐"
+            # Update timestamp untuk menampilkan waktu terbaru
+            dt = datetime.fromisoformat(fresh_confidence_data[symbol]['timestamp'])
+            row[3] = dt.strftime("%Y-%m-%d %H:%M:%S")
+            row[4] = "just now"
+    # --- END PATCH ---
 
-        # Show detailed conditions if requested
-        if detailed:
-            print("\n📊 Detailed Conditions:\n")
-            for symbol in sorted(log_confidence.keys()):
-                data = log_confidence[symbol]
-                conditions = data.get("conditions", {})
-                if conditions:
-                    print(f"\n{symbol}:")
-                    for tf, tf_conditions in conditions.items():
-                        print(f"  {tf}: {tf_conditions}")
-    else:
-        print("\n⚠️ No confidence data found in logs")
+    print(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+    print(f"\nAnalyzed logs from the past {hours} hour(s)")
+    print("⭐ = Freshly calculated confidence level")
+
+    # Print trading threshold
+    min_confidence = STRATEGY_CONFIG.get("min_confidence", 0.6)
+    print(f"\nBot trading threshold: {min_confidence:.2f}")
+
+    # Show detailed conditions if requested
+    if detailed:
+        print("\n📊 Detailed Conditions:\n")
+        for symbol, data in all_confidence.items():
+            conditions = data.get("conditions", {})
+            if conditions:
+                print(f"\n{symbol}:")
+                for tf, tf_conditions in conditions.items():
+                    print(f"  {tf}:")
+                    for cond, value in tf_conditions.items():
+                        print(f"    {cond}: {value}")
 
     # Show active trades
+    print("\n📊 Active Trades:")
     active_trades = monitor.get_active_trades()
     if active_trades:
-        print("\n📊 Active Trades:")
         for trade in active_trades:
-            print(f"  {trade['symbol']}: Entry {trade['entry_price']}, Current {trade.get('current_price', 'N/A')}")
+            symbol = trade.get("symbol")
+            entry_price = trade.get("entry_price")
+            current_price = trade.get("current_price")
+            print(f"  {symbol}: Entry {entry_price}, Current {current_price}")
     else:
-        print("\n📊 No active trades")
+        print("  No active trades")
 
 
 async def async_main():
