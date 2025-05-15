@@ -483,8 +483,19 @@ class TradingBot:
 
         # Update active trades with latest confidence
         if updated_active_trades:
-            self.monitor.update_active_trades(list(updated_active_trades.values()))
-            logger.info("[PATCH] Updated active trades with latest confidence levels")
+            # Convert the dictionary to the format expected by update_active_trades
+            # Method expects a dictionary or list of trades depending on implementation
+            try:
+                # First try with dictionary (if method expects {symbol: trade_data})
+                self.monitor.update_active_trades(updated_active_trades)
+                logger.info("[PATCH] Updated active trades with latest confidence levels (dict format)")
+            except Exception as e:
+                try:
+                    # If that fails, try with list (if method expects list of trades)
+                    self.monitor.update_active_trades(list(updated_active_trades.values()))
+                    logger.info("[PATCH] Updated active trades with latest confidence levels (list format)")
+                except Exception as e:
+                    logger.error(f"[PATCH] Failed to update active trades: {e}")
 
         # Always update uptime and last_check right before sending message
         current_uptime = round((datetime.now() - self.start_time).total_seconds() / 3600, 2)
