@@ -466,17 +466,41 @@ class TradingBot:
                 logger.error(f"Error updating confidence levels: {e}")
         # --- END PATCH ---
 
-        # --- PATCH: Always read fresh status & confidence from file before formatting Telegram message ---
-        fresh_status = self.monitor.get_bot_status() if hasattr(self.monitor, 'get_bot_status') else None
-        fresh_confidence = self.monitor.get_confidence_levels() if hasattr(self.monitor, 'get_confidence_levels') else None
+        # --- PATCH: Update confidence in active trades ---
+        # Get latest confidence levels
+        fresh_confidence = self.monitor.get_confidence_levels() if hasattr(self.monitor, 'get_confidence_levels') else {}
+
+        # Update active trades with latest confidence
+        updated_active_trades = {}
+        active_trades = self.monitor.get_active_trades() or []
+        for trade in active_trades:
+            symbol = trade.get('symbol')
+            if symbol and symbol in fresh_confidence:
+                trade['confidence'] = fresh_confidence[symbol].get('confidence', 0.5)
+                updated_active_trades[symbol] = trade
+            elif symbol:
+                updated_active_trades[symbol] = trade
+
+        # Update active trades with latest confidence
+        if updated_active_trades:
+            self.monitor.update_active_trades(list(updated_active_trades.values()))
+            logger.info("[PATCH] Updated active trades with latest confidence levels")
+
+        # Always update uptime and last_check right before sending message
+        current_uptime = round((datetime.now() - self.start_time).total_seconds() / 3600, 2)
+        self.monitor.update_status_metrics({
+            "uptime_hours": current_uptime,
+            "last_updated": datetime.now().isoformat(),
+        })
+        logger.info(f"[PATCH] Updated uptime to {current_uptime} hours and last_check to now")
+
+        # Read fresh status after all updates
+        # Format status message with latest data
         try:
-            msg = self.monitor.format_status_message() if fresh_status is None else self.monitor.format_status_message()
-        except Exception as e:
-            logger.error(f"Error formatting status message: {e}")
-            msg = "[ERROR] Failed to format status message."
-        # Send Telegram message with always-fresh status
-        try:
-            await send_telegram_message(msg)
+            status_message = self.monitor.format_status_message()
+            # Send status update via Telegram
+            await send_telegram_message(status_message)
+            logger.info("Sent status update to Telegram")
         except Exception as e:
             logger.error(f"Error sending Telegram message: {e}")
         # --- END PATCH ---
