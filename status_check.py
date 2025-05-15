@@ -434,7 +434,10 @@ async def async_main():
             df = await exchange.fetch_ohlcv(symbol, main_tf)
             if df is not None and not df.empty:
                 df_ind = strategy.calculate_indicators(df, symbol, main_tf)
-                should_buy, confidence, _ = strategy.should_buy(df_ind)
+                # Buat dictionary dengan timeframe sebagai key untuk analyze_signals
+                timeframe_data = {main_tf: df_ind}
+                # Gunakan analyze_signals yang tersedia di BollStochStrategy
+                signal, confidence, _ = strategy.analyze_signals(timeframe_data)
                 confidence_data[symbol] = {
                     "confidence": confidence,
                     "timestamp": datetime.now().isoformat(),
