@@ -424,6 +424,7 @@ async def async_main():
     from config.settings import TRADING_PAIRS, STRATEGY_CONFIG
     from src.strategies.boll_stoch_strategy import BollStochStrategy
     from src.exchange.connector import ExchangeConnector
+    from datetime import datetime  # Import datetime di awal patch
     exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
     strategy = BollStochStrategy(**STRATEGY_CONFIG)
     confidence_data = {}
