@@ -447,10 +447,24 @@ class TradingBot:
         if hasattr(self.monitor, 'update_confidence_levels') and hasattr(self.monitor, 'get_confidence_levels'):
             try:
                 latest_conf = self.monitor.get_confidence_levels() or {}
-                # Bisa tambahkan update_confidence_levels(latest_conf) jika ingin refresh timestamp
                 self.monitor.update_confidence_levels(latest_conf)
             except Exception as e:
                 logger.error(f"Error updating confidence levels: {e}")
+        # --- END PATCH ---
+
+        # --- PATCH: Always read fresh status & confidence from file before formatting Telegram message ---
+        fresh_status = self.monitor.get_bot_status() if hasattr(self.monitor, 'get_bot_status') else None
+        fresh_confidence = self.monitor.get_confidence_levels() if hasattr(self.monitor, 'get_confidence_levels') else None
+        try:
+            msg = self.monitor.format_status_message() if fresh_status is None else self.monitor.format_status_message()
+        except Exception as e:
+            logger.error(f"Error formatting status message: {e}")
+            msg = "[ERROR] Failed to format status message."
+        # Send Telegram message with always-fresh status
+        try:
+            await send_telegram_message(msg)
+        except Exception as e:
+            logger.error(f"Error sending Telegram message: {e}")
         # --- END PATCH ---
         
         # Also save active trades to Redis for quick access
