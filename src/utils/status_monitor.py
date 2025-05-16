@@ -75,13 +75,13 @@ class BotStatusMonitor:
         """Atomically write JSON data to a file."""
         temp_file_path = None
         try:
-            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, 
-                                            dir=target_path.parent, 
-                                            prefix=target_path.name + '.', 
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False,
+                                            dir=target_path.parent,
+                                            prefix=target_path.name + '.',
                                             suffix='.tmp') as tmp_f:
                 temp_file_path = Path(tmp_f.name)
                 json.dump(data, tmp_f, indent=2)
-            
+
             os.replace(temp_file_path, target_path)
             logger.debug(f"Atomically wrote JSON to {target_path}")
         except Exception as e:
@@ -106,18 +106,18 @@ class BotStatusMonitor:
         except Exception as e:
             error_msg = "Unexpected error updating bot status"
             logger.error(error_msg, exc_info=True)
-            raise FileOperationError(error_msg, e, {"status_file": str(self.status_file)}) 
-            
+            raise FileOperationError(error_msg, e, {"status_file": str(self.status_file)})
+
     @log_call()
     def update_confidence_levels(self, confidence_data: Dict[str, Any]):
         """Update confidence levels for trading pairs.
-        
+
         Args:
             confidence_data: Dictionary with symbol as key and confidence info as value
                 Example: {"BTCUSDT": {"confidence": 0.65, "timestamp": "2025-05-10T12:00:00"}}
         """
         confidence_file = self.status_dir_path / "confidence_levels.json"
-        
+
         try:
             # Load existing data if available
             existing_data = {}
@@ -127,12 +127,12 @@ class BotStatusMonitor:
                         existing_data = json.load(f)
                 except json.JSONDecodeError:
                     logger.warning("Could not decode existing confidence file, creating new one")
-            
+
             # Update with new data
             data_to_save = existing_data.copy()
             data_to_save.update(confidence_data)
             data_to_save["last_updated"] = datetime.now().isoformat()
-            
+
             # Write to file
             self._atomic_write_json(confidence_file, data_to_save)
             logger.info("Confidence levels updated successfully")
@@ -140,21 +140,21 @@ class BotStatusMonitor:
             error_msg = "Error updating confidence levels"
             logger.error(error_msg, exc_info=True)
             raise FileOperationError(error_msg, e, {"confidence_file": str(confidence_file)})
-    
+
     @log_call()
     def get_confidence_levels(self) -> Dict[str, Any]:
         """Get current confidence levels for all trading pairs.
-        
+
         Returns:
             Dictionary with confidence levels and timestamps
         """
         confidence_file = self.status_dir_path / "confidence_levels.json"
-        
+
         try:
             if not confidence_file.exists():
                 logger.debug("No confidence levels file found")
                 return {}
-                
+
             with open(confidence_file, "r") as f:
                 data = json.load(f)
                 logger.debug("Loaded confidence levels successfully")
@@ -163,18 +163,18 @@ class BotStatusMonitor:
             error_msg = "Error reading confidence levels"
             logger.error(error_msg, exc_info=True)
             return []
-            
+
     @retry_with_backoff(max_retries=3)
     @log_call()
     def get_closed_trades(self, since=None) -> List[Dict[str, Any]]:
         """Get closed trades (alias for get_completed_trades)
-        
+
         This method is an alias for get_completed_trades to maintain
         compatibility with DataSyncManager
-        
+
         Args:
             since: Optional datetime to filter trades
-            
+
         Returns:
             List of closed trades
         """
@@ -198,12 +198,12 @@ class BotStatusMonitor:
         except Exception as e:
             error_msg = "Unexpected error updating active trades"
             logger.error(error_msg, exc_info=True)
-            raise FileOperationError(error_msg, e, {"trades_file": str(self.trades_file)}) 
+            raise FileOperationError(error_msg, e, {"trades_file": str(self.trades_file)})
 
     @log_call()
     def update_active_trades(self, active_trades: Dict[str, Any]):
         """Update active trades from position manager.
-        
+
         Args:
             active_trades: Dictionary with symbol as key and trade info as value
         """
@@ -213,12 +213,12 @@ class BotStatusMonitor:
             for symbol, trade_data in active_trades.items():
                 trade_info = trade_data.copy()  # Make a copy to avoid modifying original
                 trade_info["symbol"] = symbol  # Add symbol to the trade info
-                
+
                 # Ensure current_price and pnl are properly set
                 if "current_price" not in trade_info and "entry_price" in trade_info:
                     logger.warning(f"Missing current_price for {symbol}, using entry_price")
                     trade_info["current_price"] = trade_info["entry_price"]
-                
+
                 # Calculate pnl if not present but we have prices
                 if "pnl" not in trade_info and "current_price" in trade_info and "entry_price" in trade_info:
                     try:
@@ -228,9 +228,9 @@ class BotStatusMonitor:
                         logger.debug(f"Calculated pnl for {symbol}: {trade_info['pnl']}%")
                     except (ValueError, TypeError) as e:
                         logger.error(f"Error calculating pnl for {symbol}: {e}")
-                
+
                 trades_list.append(trade_info)
-                
+
             # Call existing update_trades method
             self.update_trades(trades_list)
             logger.info(f"Updated {len(trades_list)} active trades via update_active_trades")
@@ -238,37 +238,37 @@ class BotStatusMonitor:
             error_msg = "Error in update_active_trades"
             logger.error(error_msg, exc_info=True)
             # Continue without raising to avoid breaking the main loop
-    
+
     @log_call()
     def update_status_metrics(self, metrics: Dict[str, Any]):
         """Update bot status metrics.
-        
+
         Args:
             metrics: Dictionary with status metrics like uptime, active_trades, etc.
         """
         try:
             # Get current status or initialize new one
             current_status = self.get_bot_status() or {}
-            
+
             # Update metrics in status
             if "metrics" not in current_status:
                 current_status["metrics"] = {}
-                
+
             # Update with new metrics
             current_status["metrics"].update(metrics)
-            
+
             # Update last_updated timestamp
             current_status["last_updated"] = datetime.now().isoformat()
-            
+
             # Save updated status
             self.update_bot_status(current_status)
-            
+
             logger.info("Updated bot status metrics", metrics_count=len(metrics))
         except Exception as e:
             error_msg = "Error in update_status_metrics"
             logger.error(error_msg, exc_info=True)
             # Continue without raising to avoid breaking the main loop
-    
+
     @retry_with_backoff(max_retries=3)
     @log_call()
     def get_bot_status(self) -> Dict[str, Any]:
@@ -419,13 +419,13 @@ class BotStatusMonitor:
     @log_call()
     def get_closed_trades(self, since=None) -> List[Dict[str, Any]]:
         """Get closed trades (alias for get_completed_trades)
-        
+
         This method is an alias for get_completed_trades to maintain
         compatibility with DataSyncManager
-        
+
         Args:
             since: Optional datetime to filter trades
-            
+
         Returns:
             List of closed trades
         """
@@ -454,7 +454,7 @@ class BotStatusMonitor:
                 except json.JSONDecodeError as e:
                     error_msg = "Error decoding existing completed trades JSON, will overwrite if possible."
                     logger.error(error_msg, exc_info=True, completed_trades_file=self.completed_trades_file)
-                    completed_trades = [] 
+                    completed_trades = []
 
             trade["close_time"] = datetime.now().isoformat()
 
@@ -464,7 +464,7 @@ class BotStatusMonitor:
                 "last_updated": datetime.now().isoformat(),
                 "completed_trades": completed_trades,
             }
-            
+
             self._atomic_write_json(self.completed_trades_file, data_to_save)
 
             logger.info(
@@ -509,7 +509,7 @@ class BotStatusMonitor:
 
             health = status.get("health", {})
             status_line = f"Status: {'🟢 Running' if health.get('is_running') else '🔴 Stopped'}"
-            msg += f"{status_line}\n" 
+            msg += f"{status_line}\n"
             msg += f"Uptime: {health.get('uptime', 'N/A')}\n"
             msg += f"Last Check: {health.get('last_check', 'N/A')}\n\n"
 
@@ -517,11 +517,11 @@ class BotStatusMonitor:
             msg += "💰 Balance:\n"
             # Filter out assets with LD prefix (locked/staked assets)
             tradable_assets = {asset: amount for asset, amount in balance.items() if not asset.startswith('LD')}
-            
+
             # Display tradable assets first
             for asset, amount in sorted(tradable_assets.items()):
                 msg += f"{asset}: {amount:.8f}\n"
-                
+
             # Optionally add a separator and summary for LD assets if needed
             ld_assets = {asset: amount for asset, amount in balance.items() if asset.startswith('LD')}
             if ld_assets and False:  # Set to True if you want to show LD assets in a separate section
@@ -543,7 +543,7 @@ class BotStatusMonitor:
                     msg += f"Current: {float(current_price):.8f}\n"
                 else:
                     msg += f"Current: {current_price}\n"
-                
+
                 # Format P/L with proper handling of different data types
                 pnl = trade.get('pnl', 0)
                 if isinstance(pnl, (int, float)):
@@ -553,7 +553,7 @@ class BotStatusMonitor:
                     msg += f"P/L: {float(pnl):.2f}%\n"
                 else:
                     msg += f"P/L: 0.00%\n"
-                
+
                 # Add confidence if available
                 if 'confidence' in trade:
                     msg += f"Confidence: {trade.get('confidence', 0):.2f}\n"
@@ -563,7 +563,7 @@ class BotStatusMonitor:
             msg += f"Trades: {perf.get('total_trades', 0)}\n"
             msg += f"Win Rate: {perf.get('win_rate', 0):.1f}%\n"
             msg += f"Profit: {perf.get('total_profit', 0):.2f}%\n"
-            
+
             # Add current confidence levels if available
             try:
                 confidence_data = self.get_confidence_levels()
@@ -583,7 +583,7 @@ class BotStatusMonitor:
                             except Exception as ts_error:
                                 logger.error(f"Error formatting timestamp: {ts_error}")
                                 pass
-                            
+
                             msg += f"{symbol}: {data['confidence']:.2f}{timestamp_str}\n"
             except Exception as e:
                 logger.error(f"Error adding confidence levels to status: {str(e)}")
@@ -595,9 +595,9 @@ class BotStatusMonitor:
             )
             return msg
 
-        except Exception as e: 
+        except Exception as e:
             logger.error(
                 "Error formatting status message",
-                exc_info=True 
+                exc_info=True
             )
             return "⚠️ Error generating status report. Check logs for details."
