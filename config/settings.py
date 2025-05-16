@@ -96,7 +96,7 @@ TELEGRAM_CONFIG = {
     "chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
     "notification_level": "INFO",  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     "send_status_updates": True,  # Set to False to disable all status updates
-    "status_update_hours": {"start": 7, "end": 21},  # Only send between 7 AM and 9 PM
+    "status_update_hours": {"start": 8, "end": 22},  # Only send between 8 AM and 10 PM
 }
 
 # Exchange configuration

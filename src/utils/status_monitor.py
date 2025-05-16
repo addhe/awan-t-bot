@@ -563,10 +563,14 @@ class BotStatusMonitor:
                             # Format timestamp
                             timestamp_str = ""
                             try:
-                                if "timestamp" in data:
+                                # Check for updated_at (new format) or timestamp (old format)
+                                if "updated_at" in data:
+                                    timestamp_str = f" (updated: {data['updated_at']})"
+                                elif "timestamp" in data:
                                     dt = datetime.fromisoformat(data["timestamp"])
                                     timestamp_str = f" (updated: {dt.strftime('%H:%M:%S')})"
-                            except:
+                            except Exception as ts_error:
+                                logger.error(f"Error formatting timestamp: {ts_error}")
                                 pass
                             
                             msg += f"{symbol}: {data['confidence']:.2f}{timestamp_str}\n"

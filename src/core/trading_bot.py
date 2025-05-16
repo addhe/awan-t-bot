@@ -467,11 +467,20 @@ class TradingBot:
                 self.monitor.update_status_metrics({"performance_24h": performance_24h})
         except Exception as e:
             logger.error(f"Error updating 24h performance: {e}")
-        # Update confidence levels (harusnya dari logic sinyal, fallback: tidak update jika tidak ada)
+        # Update confidence levels with current timestamp
         if hasattr(self.monitor, 'update_confidence_levels') and hasattr(self.monitor, 'get_confidence_levels'):
             try:
                 latest_conf = self.monitor.get_confidence_levels() or {}
+
+                # Update timestamp for each pair's confidence
+                current_time = datetime.now().strftime('%H:%M:%S')
+                for symbol in latest_conf:
+                    if isinstance(latest_conf[symbol], dict):
+                        latest_conf[symbol]['updated_at'] = current_time
+
+                # Save updated confidence levels
                 self.monitor.update_confidence_levels(latest_conf)
+                logger.info(f"Updated confidence levels with current timestamp: {current_time}")
             except Exception as e:
                 logger.error(f"Error updating confidence levels: {e}")
         # --- END PATCH ---
