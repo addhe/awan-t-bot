@@ -515,8 +515,19 @@ class BotStatusMonitor:
 
             balance = status.get("balance", {})
             msg += "💰 Balance:\n"
-            for asset, amount in balance.items():
+            # Filter out assets with LD prefix (locked/staked assets)
+            tradable_assets = {asset: amount for asset, amount in balance.items() if not asset.startswith('LD')}
+            
+            # Display tradable assets first
+            for asset, amount in sorted(tradable_assets.items()):
                 msg += f"{asset}: {amount:.8f}\n"
+                
+            # Optionally add a separator and summary for LD assets if needed
+            ld_assets = {asset: amount for asset, amount in balance.items() if asset.startswith('LD')}
+            if ld_assets and False:  # Set to True if you want to show LD assets in a separate section
+                msg += "\n🔒 Locked/Staked Assets:\n"
+                for asset, amount in sorted(ld_assets.items()):
+                    msg += f"{asset}: {amount:.8f}\n"
             msg += "\n"
 
             msg += f"📊 Active Trades ({len(trades)}):\n"
