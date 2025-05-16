@@ -394,7 +394,17 @@ class TradingBot:
 
         # --- PATCH: Update all current prices before update_active_trades ---
         updated_trades = {}
-        for symbol, trade_data in active_trades.items():
+
+        # Handle both dictionary and list formats for active_trades
+        if isinstance(active_trades, dict):
+            active_trades_items = active_trades.items()
+        elif isinstance(active_trades, list):
+            active_trades_items = [(trade.get('symbol'), trade) for trade in active_trades if trade.get('symbol')]
+        else:
+            logger.error(f"Unexpected type for active_trades: {type(active_trades)}")
+            active_trades_items = []
+
+        for symbol, trade_data in active_trades_items:
             entry_price = trade_data.get('entry_price')
             if not entry_price:
                 logger.warning(f"Missing entry price for {symbol}")
@@ -476,11 +486,19 @@ class TradingBot:
         # Update active trades with latest confidence
         updated_active_trades = {}
         active_trades = self.monitor.get_active_trades() or []
-        for trade in active_trades:
-            symbol = trade.get('symbol')
-            if symbol and symbol in fresh_confidence:
-                trade['confidence'] = fresh_confidence[symbol].get('confidence', 0.5)
-            if symbol:
+
+        # Handle both list and dictionary formats for active_trades
+        if isinstance(active_trades, list):
+            for trade in active_trades:
+                symbol = trade.get('symbol')
+                if symbol and symbol in fresh_confidence:
+                    trade['confidence'] = fresh_confidence[symbol].get('confidence', 0.5)
+                if symbol:
+                    updated_active_trades[symbol] = trade
+        elif isinstance(active_trades, dict):
+            for symbol, trade in active_trades.items():
+                if symbol in fresh_confidence:
+                    trade['confidence'] = fresh_confidence[symbol].get('confidence', 0.5)
                 updated_active_trades[symbol] = trade
 
         # Update active trades with latest confidence
@@ -602,7 +620,17 @@ class TradingBot:
 
                 # Make sure active trades are updated with latest prices
                 active_trades_with_prices = {}
-                for symbol, trade_data in active_trades.items():
+
+                # Handle both dictionary and list formats for active_trades
+                if isinstance(active_trades, dict):
+                    active_trades_items = active_trades.items()
+                elif isinstance(active_trades, list):
+                    active_trades_items = [(trade.get('symbol'), trade) for trade in active_trades if trade.get('symbol')]
+                else:
+                    logger.error(f"Unexpected type for active_trades in Telegram update: {type(active_trades)}")
+                    active_trades_items = []
+
+                for symbol, trade_data in active_trades_items:
                     entry_price = trade_data.get('entry_price')
                     if not entry_price:
                         logger.warning(f"Missing entry price for {symbol}")
