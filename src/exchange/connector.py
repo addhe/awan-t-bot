@@ -401,36 +401,58 @@ class ExchangeConnector:
             # If no nested data found, use the account_info directly
             balance_data = balance_data or account_info
 
-            # Process all balances
-            free_balances = balance_data.get('free', {}) or {}
-            used_balances = balance_data.get('used', {}) or {}
-            total_balances = balance_data.get('total', {}) or {}
+            # Binance specific handling - check for 'balances' in the response
+            if 'balances' in balance_data and isinstance(balance_data['balances'], list):
+                logger.info("Found 'balances' list in response, processing Binance format")
+                for balance in balance_data['balances']:
+                    try:
+                        asset = balance.get('asset')
+                        if not asset:
+                            continue
+                            
+                        free = float(balance.get('free', 0) or 0)
+                        locked = float(balance.get('locked', 0) or 0)
+                        total = free + locked
+                        
+                        if free > 0 or locked > 0:
+                            balances[asset] = {
+                                'free': free,
+                                'used': locked,
+                                'total': total
+                            }
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Error processing balance for {balance}: {e}", exc_info=True)
+            else:
+                # Original handling for other exchanges
+                free_balances = balance_data.get('free', {}) or {}
+                used_balances = balance_data.get('used', {}) or {}
+                total_balances = balance_data.get('total', {}) or {}
 
-            # Get all asset symbols
-            all_assets = set()
-            for bal_dict in [free_balances, used_balances, total_balances]:
-                if isinstance(bal_dict, dict):
-                    all_assets.update(k for k in bal_dict.keys() if k is not None)
+                # Get all asset symbols
+                all_assets = set()
+                for bal_dict in [free_balances, used_balances, total_balances]:
+                    if isinstance(bal_dict, dict):
+                        all_assets.update(k for k in bal_dict.keys() if k is not None)
 
-            # Process each asset
-            for asset in all_assets:
-                if not asset:  # Skip None or empty keys
-                    continue
+                # Process each asset
+                for asset in all_assets:
+                    if not asset:  # Skip None or empty keys
+                        continue
 
-                try:
-                    free = float(free_balances.get(asset, 0) or 0)
-                    used = float(used_balances.get(asset, 0) or 0)
-                    total = float(total_balances.get(asset, 0) or 0)
+                    try:
+                        free = float(free_balances.get(asset, 0) or 0)
+                        used = float(used_balances.get(asset, 0) or 0)
+                        total = float(total_balances.get(asset, 0) or 0)
 
-                    # Only include assets with non-zero balance
-                    if free > 0 or used > 0 or total > 0:
-                        balances[asset] = {
-                            'free': free,
-                            'used': used,
-                            'total': total
-                        }
-                except (ValueError, TypeError) as e:
-                    logger.error(f"Error processing balance for {asset}: {e}")
+                        # Only include assets with non-zero balance
+                        if free > 0 or used > 0 or total > 0:
+                            balances[asset] = {
+                                'free': free,
+                                'used': used,
+                                'total': total
+                            }
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Error processing balance for {asset}: {e}")
 
             logger.info(
                 f"Fetched balances for {len(balances)} assets",
