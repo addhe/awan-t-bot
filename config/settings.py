@@ -109,10 +109,20 @@ TELEGRAM_CONFIG = {
 
 # Exchange configuration
 EXCHANGE_CONFIG = {
-    "name": "binance",
+    "name": "binance",  # Nama exchange (harus sesuai dengan yang didukung CCXT)
     "api_key": os.getenv("BINANCE_API_KEY", ""),
     "api_secret": os.getenv("BINANCE_API_SECRET", ""),
     "testnet": os.getenv("USE_TESTNET", "False").lower() == "true",
+    "options": {
+        "defaultType": "spot",  # spot, future, margin, delivery, option, etc.
+        "adjustForTimeDifference": True,
+        "recursiveErrorHandling": True,
+        "warnOnFetchOHLCVLimitArgument": False,
+    },
+    "timeout": 30000,  # 30 detik timeout untuk koneksi
+    "enableRateLimit": True,  # Aktifkan rate limiting otomatis
+    "rateLimit": 1000,  # ms antara request (default: 1000)
+    "verbose": os.getenv("EXCHANGE_VERBOSE", "False").lower() == "true",  # Logging verbose
 }
 
 # Redis configuration

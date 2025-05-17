@@ -37,34 +37,66 @@ class ExchangeConnector:
         self.system_config = system_config
         self.exchange = self._initialize_exchange()
 
-    def _initialize_exchange(self) -> ccxt.Exchange:
+    def _initialize_exchange(self):
         """Initialize the exchange connection"""
         try:
-            exchange_class = getattr(ccxt, self.config["name"])
-            exchange = exchange_class(
-                {
-                    "apiKey": self.config["api_key"],
-                    "secret": self.config["api_secret"],
-                    "enableRateLimit": True,
-                    # Set timeouts during initialization
-                    "options": {
-                        "timeout": self.system_config.get("connection_timeout", 30) * 1000,
-                        "recvWindow": self.system_config.get("read_timeout", 30) * 1000,
-                    }
-                }
-            )
-
-            if self.config["testnet"]:
+            exchange_name = self.config["name"].lower()
+            logger.info(f"Initializing {exchange_name} exchange connection...")
+            
+            # Check if exchange is supported by CCXT
+            if exchange_name not in ccxt.exchanges:
+                raise ValueError(f"Exchange {exchange_name} is not supported by CCXT")
+            
+            # Get exchange class
+            exchange_class = getattr(ccxt, exchange_name)
+            
+            # Prepare config
+            exchange_config = {
+                "apiKey": self.config["api_key"],
+                "secret": self.config["api_secret"],
+                "enableRateLimit": True,
+                "options": {
+                    "defaultType": "spot",  # Default to spot market
+                    "adjustForTimeDifference": True,
+                    "recvWindow": self.system_config.get("read_timeout", 30) * 1000,
+                },
+                "timeout": self.system_config.get("connection_timeout", 30) * 1000,
+                "verbose": self.system_config.get("debug", False),  # Enable verbose mode for debugging
+            }
+            
+            logger.debug(f"Exchange config: {exchange_config}")
+            
+            # Initialize exchange
+            exchange = exchange_class(exchange_config)
+            
+            # Set sandbox mode if enabled
+            if self.config.get("testnet", False):
+                logger.info("Enabling testnet/sandbox mode")
                 exchange.set_sandbox_mode(True)
-
-            logger.info(f"Initialized {self.config['name']} exchange. Testnet: {self.config['testnet']}")
+            
+            # Load markets
+            try:
+                logger.info("Loading markets...")
+                exchange.load_markets()
+                logger.info(f"Successfully loaded {len(exchange.markets)} markets")
+            except Exception as e:
+                logger.warning(f"Could not load markets: {e}")
+            
+            # Test connectivity
+            try:
+                logger.info("Testing exchange connectivity...")
+                exchange.fetch_time()
+                logger.info("Exchange connectivity test successful")
+            except Exception as e:
+                logger.warning(f"Exchange connectivity test failed: {e}")
+            
+            logger.info(f"Successfully initialized {exchange_name} exchange")
             return exchange
 
         except Exception as e:
-            logger.error(
-                f"Failed to initialize exchange: {e}", exc_info=True
-            )
-            raise
+            error_msg = f"Failed to initialize exchange {self.config.get('name', 'unknown')}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            raise RuntimeError(error_msg) from e
 
     async def _safe_async_call(self, method_name, *args, **kwargs):
         """Safely call a method that might be async or sync
@@ -77,18 +109,49 @@ class ExchangeConnector:
         Returns:
             Result of the method call
         """
-        method = getattr(self.exchange, method_name)
+        try:
+            # Log the method call with parameters (without sensitive data)
+            safe_kwargs = {k: '***' if 'secret' in k.lower() or 'key' in k.lower() else v 
+                          for k, v in kwargs.items()}
+            logger.info(f"Calling exchange method: {method_name}")
+            logger.debug(f"Method args: {args}, kwargs: {safe_kwargs}")
+            
+            # Get the method from the exchange instance
+            if not hasattr(self.exchange, method_name):
+                raise AttributeError(f"Exchange does not have method: {method_name}")
+                
+            method = getattr(self.exchange, method_name)
 
-        # Periksa apakah metode adalah coroutine function
-        import inspect
-        if inspect.iscoroutinefunction(method):
-            # Jika async, panggil dengan await
-            logger.debug(f"{method_name} adalah coroutine function, memanggil dengan await")
-            return await method(*args, **kwargs)
-        else:
-            # Jika bukan async, panggil sebagai fungsi normal
-            logger.debug(f"{method_name} bukan coroutine function, memanggil sebagai fungsi normal")
-            return method(*args, **kwargs)
+            # Check if the method is a coroutine function
+            import inspect
+            import asyncio
+            
+            if inspect.iscoroutinefunction(method):
+                # If async, call with await
+                logger.debug(f"{method_name} is a coroutine function, calling with await")
+                result = await method(*args, **kwargs)
+            else:
+                # If not async, run in executor to avoid blocking the event loop
+                logger.debug(f"{method_name} is not a coroutine, running in executor")
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,  # Use default executor
+                    lambda: method(*args, **kwargs)
+                )
+            
+            # Log successful call
+            logger.debug(f"Successfully called {method_name}")
+            return result
+            
+        except ccxt.NetworkError as e:
+            logger.error(f"Network error in {method_name}: {str(e)}")
+            raise
+        except ccxt.ExchangeError as e:
+            logger.error(f"Exchange error in {method_name}: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in {method_name}: {str(e)}", exc_info=True)
+            raise
 
     @rate_limited_api()
     @handle_exchange_errors(notify=False)
@@ -263,19 +326,31 @@ class ExchangeConnector:
 
         try:
             # Try with different account types if needed
-            account_types = [None, 'future', 'spot', 'margin']
+            account_types = [None, 'future', 'spot', 'margin', 'swap']
             account_info = None
             last_error = None
 
             for account_type in account_types:
                 try:
-                    params = {'type': account_type} if account_type else {}
+                    params = {'type': account_type} if account_type is not None else {}
                     logger.debug(f"Trying to fetch balance with params: {params}")
                     account_info = await self._safe_async_call('fetch_balance', params)
 
+                    # Log raw response for debugging
+                    logger.debug(f"Raw response from exchange: {account_info}")
+                    
                     # If we get here, the call was successful
-                    logger.debug(f"Successfully fetched balance with params: {params}")
-                    break
+                    logger.info(f"Successfully fetched balance with params: {params}")
+                    
+                    # Check if we got valid data
+                    if account_info and (account_info.get('free') or account_info.get('total')):
+                        logger.info(f"Found valid balance data with account type: {account_type}")
+                        break
+                    else:
+                        logger.warning(f"No balance data found with account type: {account_type}")
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Failed to fetch balance with params {params}: {str(e)}", exc_info=True)
 
                 except Exception as e:
                     last_error = e
@@ -288,11 +363,28 @@ class ExchangeConnector:
 
             # Log raw account info for debugging (safely)
             try:
-                debug_info = {k: v for k, v in account_info.items()
-                             if k in ['free', 'used', 'total', 'info'] and v is not None}
-                logger.debug("Raw account info", info=debug_info)
+                # Try to get a string representation of the response
+                response_str = str(account_info)
+                if len(response_str) > 500:  # Truncate very large responses
+                    response_str = response_str[:500] + '... (truncated)'
+                
+                logger.info(f"Raw exchange response: {response_str}")
+                
+                # Try to extract and log balance info
+                if hasattr(account_info, 'keys'):
+                    logger.info(f"Response keys: {list(account_info.keys())}")
+                    
+                    # Check common balance keys
+                    for key in ['free', 'used', 'total', 'info', 'balances']:
+                        if key in account_info:
+                            logger.info(f"Found key '{key}' in response")
+                            
+                            # Log first few items if it's a dict
+                            if isinstance(account_info[key], dict):
+                                items = list(account_info[key].items())[:5]  # First 5 items
+                                logger.info(f"First few items in '{key}': {items}")
             except Exception as e:
-                logger.error(f"Error logging account info: {e}")
+                logger.error(f"Error logging account info: {e}", exc_info=True)
 
             # Handle different exchange response formats
             if not isinstance(account_info, dict):
