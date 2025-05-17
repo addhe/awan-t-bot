@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
 Utility script to sell a specific asset on Binance
-Usage: python sell_asset.py SYMBOL [--amount AMOUNT] [--all]
-Example: python sell_asset.py SOLO --all
-         python sell_asset.py SOLO --amount 1.5
+Usage: python scripts/sell_asset.py SYMBOL [--amount AMOUNT] [--all]
+Example: python scripts/sell_asset.py SOLO --all
+         python scripts/sell_asset.py SOLO --amount 1.5
 """
 
 import os
@@ -13,10 +13,12 @@ import argparse
 from decimal import Decimal
 from pathlib import Path
 
-# Import dengan path lengkap untuk Docker environment
+# Add project root to Python path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from src.exchange.connector import ExchangeConnector
 from src.utils.structured_logger import get_logger
-from config.settings import EXCHANGE_CONFIG
+from config.settings import EXCHANGE_CONFIG, SYSTEM_CONFIG
 
 logger = get_logger("sell_asset")
 
@@ -40,12 +42,10 @@ async def get_balance(exchange, asset):
 
 async def sell_asset(symbol, amount=None, sell_all=False):
     """Sell a specific asset"""
-    # Initialize exchange connector
+    # Initialize exchange connector with correct parameters
     exchange = ExchangeConnector(
-        exchange_name=EXCHANGE_CONFIG["name"],
-        api_key=EXCHANGE_CONFIG["api_key"],
-        api_secret=EXCHANGE_CONFIG["api_secret"],
-        testnet=EXCHANGE_CONFIG["testnet"]
+        exchange_config=EXCHANGE_CONFIG,
+        system_config=SYSTEM_CONFIG
     )
     
     # Connect to exchange
