@@ -631,8 +631,14 @@ class PositionManager:
                             pnl=f"{current_profit_pct:.2%}"
                         )
 
+                # Check minimum hold time
+                min_hold_minutes = self.config.get("hold_time_minutes", 0)
+                entry_time = datetime.fromisoformat(trade.get("entry_time", datetime.now().isoformat()))
+                hold_time_minutes = (datetime.now() - entry_time).total_seconds() / 60
+                
                 # Close if TP/SL (potentially trailed) or strategy signal triggered
-                if should_sell or stop_loss_triggered or take_profit_triggered:
+                if (should_sell or stop_loss_triggered or take_profit_triggered) and \
+                   (hold_time_minutes >= min_hold_minutes or stop_loss_triggered):
                     # Ensure we have a close reason
                     if not close_reason:
                         if should_sell:
@@ -643,6 +649,25 @@ class PositionManager:
                             close_reason = "min_profit" if disable_stop_loss else "take_profit"
                         else:
                             close_reason = "unknown"
+                    
+                    # Log hold time information
+                    logger.info(
+                        f"Hold time check for {symbol}",
+                        symbol=symbol,
+                        hold_time_minutes=round(hold_time_minutes, 2),
+                        min_hold_minutes=min_hold_minutes,
+                        can_close=hold_time_minutes >= min_hold_minutes,
+                        close_reason=close_reason
+                    )
+                elif should_sell or take_profit_triggered:  # Log why position wasn't closed
+                    logger.info(
+                        f"Position for {symbol} not closed - minimum hold time not met",
+                        symbol=symbol,
+                        hold_time_minutes=round(hold_time_minutes, 2),
+                        min_hold_minutes=min_hold_minutes,
+                        close_reason="hold_time"
+                    )
+                    continue
 
                     # Log the close action with details
                     logger.info(

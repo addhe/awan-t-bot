@@ -21,9 +21,11 @@ STRATEGY_CONFIG = {
     "position_size": 0.02,  # 2% of account balance per trade
     "max_positions": 3,  # Maximum number of concurrent positions
     # Risk management
-    "stop_loss": 0.02,  # 2% stop loss from entry
-    "take_profit": 0.03,  # 3% take profit from entry
-    "trailing_stop": 0.01,  # 1% trailing stop when in profit
+    "stop_loss": 0.05,  # 5% stop loss from entry (wider to avoid premature exits)
+    "take_profit": 0.10,  # 10% take profit from entry (higher target)
+    "trailing_stop": 0.03,  # 3% trailing stop when in profit (wider to let profits run)
+    "min_profit_pct": 0.01,  # Minimum 1% profit before trailing stop activates
+    "hold_time_minutes": 30,  # Minimum hold time in minutes before considering exit
     # Timeframe weights
     "timeframe_weights": {"15m": 0.1, "1h": 0.3, "4h": 0.3, "1d": 0.3},
 }
