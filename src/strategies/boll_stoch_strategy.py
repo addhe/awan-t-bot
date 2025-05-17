@@ -1,7 +1,8 @@
 import pandas as pd
-from typing import Dict, List, Tuple, Any
+import numpy as np
+from typing import Dict, List, Tuple, Any, Optional
 from ta.volatility import BollingerBands
-from ta.momentum import StochRSIIndicator
+from ta.momentum import StochRSIIndicator, RSIIndicator
 from ta.trend import EMAIndicator
 
 from src.utils.error_handlers import handle_strategy_errors
@@ -553,63 +554,77 @@ class BollStochStrategy:
         else:
             stop_loss = take_profit = 0.0
 
-        return {"stop_loss": stop_loss, "take_profit": take_profit}
-
     @handle_strategy_errors(notify=False)
     def should_sell(self, df: pd.DataFrame) -> Tuple[bool, float]:
-        """Check if we should sell based on current conditions
+        """
+        Check if we should sell based on the current market conditions.
 
         Args:
-            df (pd.DataFrame): DataFrame with price data and indicators
+            df: DataFrame with OHLCV and indicator data
 
         Returns:
-            Tuple[bool, float]: (should_sell, confidence)
+            Tuple of (should_sell, confidence)
         """
-        if len(df) < 2:  # Need at least 2 candles
-            logger.warning(
-                "Not enough data to check sell conditions", rows=len(df)
-            )
+        if df.empty or len(df) < 2:
+            logger.warning("Not enough data to check sell conditions")
             return False, 0.0
 
-        # Get latest values
-        current_price = df["close"].iloc[-1]
-        bb_upper = df["bb_upper"].iloc[-1]
-        # bb_middle = df["bb_middle"].iloc[-1]
-        ema = df["ema"].iloc[-1]
-        stoch_k = df["stoch_k"].iloc[-1]
-        stoch_d = df["stoch_d"].iloc[-1]
+        try:
+            # Ensure all required columns exist
+            required_columns = ['close', 'bb_upper', 'bb_lower', 'ema', 'stoch_k', 'stoch_d']
+            missing_columns = [col for col in required_columns if col not in df.columns]
 
-        logger.debug(
-            "Checking sell conditions",
-            price=current_price,
-            bb_upper=bb_upper,
-            ema=ema,
-            stoch_k=stoch_k,
-            stoch_d=stoch_d,
-        )
+            if missing_columns:
+                logger.error(f"Missing required columns: {missing_columns}")
+                # Try to calculate indicators if missing
+                if 'close' in df.columns:
+                    df = self.calculate_indicators(df)
+                else:
+                    return False, 0.0
 
-        # Sell conditions
-        if (
-            current_price > bb_upper  # Price above upper BB
-            and current_price < ema  # Price below EMA
-            and stoch_k > 80  # Overbought
-            and stoch_k < stoch_d
-        ):  # Stoch crossunder
+            # Get the latest values with fallbacks
+            latest = df.iloc[-1]
+            prev = df.iloc[-2]
 
-            # Calculate confidence based on how overbought we are
-            confidence = min((stoch_k - 80) / 20, 1.0)  # Scale 80-100 to 0-1
+            # Get indicator values with fallbacks
+            close = latest['close']
+            bb_upper = latest.get('bb_upper', close * 1.02)  # Default 2% above
+            ema = latest.get('ema', close)  # Fallback to close price
+            stoch_k = latest.get('stoch_k', 50)  # Neutral value if missing
+            stoch_d = latest.get('stoch_d', 50)  # Neutral value if missing
 
-            logger.info(
-                "Sell signal detected",
-                price=current_price,
+            # Safely get previous values
+            prev_stoch_k = prev.get('stoch_k', stoch_k)
+            prev_stoch_d = prev.get('stoch_d', stoch_d)
+
+            # Check sell conditions
+            conditions = [
+                close > bb_upper,  # Price above upper band
+                close < ema,       # Price below EMA
+                stoch_k > self.stoch_overbought,  # Overbought condition
+                stoch_k < stoch_d,  # Bearish crossover
+                prev_stoch_k >= prev_stoch_d  # Was above signal line
+            ]
+
+            # Calculate confidence based on conditions met
+            confidence = sum(conditions) / len(conditions) if conditions else 0.0
+
+            logger.debug(
+                "Sell conditions check",
+                close=close,
                 bb_upper=bb_upper,
+                ema=ema,
                 stoch_k=stoch_k,
-                confidence=confidence,
+                stoch_d=stoch_d,
+                conditions_met=sum(conditions),
+                confidence=confidence
             )
 
-            return True, confidence
+            return any(conditions), confidence
 
-        return False, 0.0
+        except Exception as e:
+            logger.error(f"Error in should_sell: {e}", exc_info=True)
+            return False, 0.0
 
     @handle_strategy_errors(notify=False)
     def calculate_pnl(self, entry_price: float, current_price: float) -> float:
