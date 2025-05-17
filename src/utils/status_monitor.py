@@ -546,13 +546,21 @@ class BotStatusMonitor:
 
                 # Format P/L with proper handling of different data types
                 pnl = trade.get('pnl', 0)
-                if isinstance(pnl, (int, float)):
+                # Check if we have a pre-formatted P/L string
+                pnl_formatted = trade.get('pnl_formatted')
+                
+                if pnl_formatted and isinstance(pnl_formatted, str):
+                    # Use the pre-formatted string if available
+                    msg += f"P/L: {pnl_formatted}\n"
+                elif isinstance(pnl, (int, float)):
+                    # Format as percentage with 2 decimal places
                     msg += f"P/L: {pnl:.2f}%\n"
                 elif isinstance(pnl, str) and pnl.replace('-', '', 1).replace('.', '', 1).isdigit():
                     # Handle string representation of numbers including negative values
                     msg += f"P/L: {float(pnl):.2f}%\n"
                 else:
-                    msg += f"P/L: 0.00%\n"
+                    # Fallback to 0.00% if P/L is not in expected format
+                    msg += "P/L: 0.00%\n"
 
                 # Add confidence if available
                 if 'confidence' in trade:

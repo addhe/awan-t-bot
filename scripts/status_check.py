@@ -336,17 +336,19 @@ async def update_active_trades_prices(monitor):
                     print(f"Using last known price for {symbol}: {current_price}")
 
             # Calculate P/L
-            if current_price and entry_price:
+            if current_price and entry_price and entry_price > 0:
                 pnl = ((current_price - entry_price) / entry_price) * 100
-                pnl_formatted = f"{pnl:.2f}%"
             else:
-                pnl = 0
-                pnl_formatted = "0.00%"
+                pnl = 0.0
+            
+            # Format for display
+            pnl_formatted = f"{pnl:.2f}%"
 
             # Update trade with current price
             updated_trade = trade.copy()
             updated_trade["current_price"] = current_price
-            updated_trade["pnl"] = pnl_formatted
+            updated_trade["pnl"] = pnl  # Store as float for calculations
+            updated_trade["pnl_formatted"] = pnl_formatted  # Store formatted string for display
             updated_trades.append(updated_trade)
 
             # Also save the trade info to Redis for quick access
@@ -358,7 +360,8 @@ async def update_active_trades_prices(monitor):
                     "entry_price": str(entry_price),
                     "current_price": str(current_price),
                     "quantity": str(trade["quantity"]),
-                    "pnl": str(pnl),
+                    "pnl": str(pnl),  # Store as string for consistency
+                    "pnl_formatted": pnl_formatted,
                     "updated_at": dt.now().isoformat()
                 })
                 # Set expiration to 1 day
