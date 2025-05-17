@@ -4,6 +4,32 @@ Panduan mengatasi masalah umum pada trading bot.
 
 ---
 
+## 0. Update Terbaru (2025-05-17)
+
+### a. Error 'list' object has no attribute 'items'
+- Penyebab: Format data `active_trades` tidak konsisten (kadang list, kadang dictionary).
+- Solusi: Sudah diperbaiki di versi terbaru dengan penanganan tipe data yang lebih robust.
+
+### b. Timestamp confidence level tidak diperbarui
+- Penyebab: Kode tidak memperbarui timestamp saat mengupdate confidence level.
+- Solusi: Sudah diperbaiki di versi terbaru, timestamp sekarang selalu diperbarui.
+
+### c. Cara menjual aset yang tidak diinginkan (SOLO, PEPE, dll)
+- Solusi: Gunakan script baru `src/utils/sell_asset.py`:
+  ```bash
+  # Menjual semua SOLO
+  docker exec -it awan-trading-bot python src/utils/sell_asset.py SOLO --all
+  
+  # Menjual jumlah tertentu
+  docker exec -it awan-trading-bot python src/utils/sell_asset.py SOLO --amount 1.5
+  ```
+
+### d. Aset dengan awalan LD (locked/staked) di notifikasi Telegram
+- Penyebab: Aset dengan awalan LD (LDBNB, LDBTC, dll) adalah aset yang di-stake dan tidak dapat diperdagangkan.
+- Solusi: Sudah difilter dari tampilan balance di notifikasi Telegram di versi terbaru.
+
+---
+
 ## 1. Masalah Umum
 
 ### a. Error indikator (misal: 'bb_upper')

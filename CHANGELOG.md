@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Initial changelog created.
 
+## [2025-05-17]
+### Added
+- Script baru `src/utils/sell_asset.py` untuk menjual aset spesifik seperti SOLO
+- Konfigurasi jam notifikasi Telegram di settings.py (`status_update_hours`)
+- Filter untuk aset dengan awalan LD (locked/staked) di tampilan balance Telegram
+
+### Changed
+- Peningkatan penanganan format data untuk `active_trades` (mendukung list dan dictionary)
+- Pembaruan timestamp confidence level di notifikasi Telegram
+- Pembaruan dokumentasi (README.md) dengan informasi perubahan terbaru
+
+### Fixed
+- Error `'list' object has no attribute 'items'` di notifikasi Telegram
+- Duplikasi kode di `status_check.py` untuk update status metrics
+- Timestamp confidence level yang tidak diperbarui di notifikasi Telegram
+
 ## [2025-05-13]
 ### Added
 - Dukungan Docker dan Docker Compose untuk deployment yang lebih mudah

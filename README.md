@@ -1,6 +1,16 @@
 # Awan Trading Bot
 
-## Latest Update (2025-05-13)
+## Latest Update (2025-05-17)
+
+Improved bot notifications and data handling:
+- Fixed error handling for inconsistent data formats (list vs dictionary)
+- Added configurable notification hours in settings.py (8 AM - 10 PM)
+- Improved confidence level timestamp updates in Telegram notifications
+- Added filtering for locked/staked assets (LD prefix) in balance display
+- Added new utility script (src/utils/sell_asset.py) for selling specific assets
+- Enhanced error logging for better troubleshooting
+
+## Previous Update (2025-05-13)
 
 Added Docker support, data persistence, and enhanced trading features:
 - Implemented Docker and Docker Compose for easy deployment
