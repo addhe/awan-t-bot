@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
 Utility script to sell a specific asset on Binance
-Usage: python src/utils/sell_asset.py SYMBOL [--amount AMOUNT] [--all]
-Example: python src/utils/sell_asset.py SOLO --all
-         python src/utils/sell_asset.py SOLO --amount 1.5
+Usage: python sell_asset.py SYMBOL [--amount AMOUNT] [--all]
+Example: python sell_asset.py SOLO --all
+         python sell_asset.py SOLO --amount 1.5
 """
 
 import os
@@ -13,8 +13,9 @@ import argparse
 from decimal import Decimal
 from pathlib import Path
 
-from src.exchange.connector import ExchangeConnector
-from src.utils.structured_logger import get_logger
+# Import dari root directory
+from exchange.connector import ExchangeConnector
+from utils.structured_logger import get_logger
 from config.settings import EXCHANGE_CONFIG
 
 logger = get_logger("sell_asset")
