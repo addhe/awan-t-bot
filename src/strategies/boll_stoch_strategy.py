@@ -34,15 +34,58 @@ class BollStochStrategy:
         self.stoch_oversold = stoch_oversold
         self.stoch_overbought = stoch_overbought
 
+    def _validate_price_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Validate and clean price data"""
+        # Create a copy to avoid modifying the original
+        df = df.copy()
+
+        # Check for NaN or infinite values in price columns
+        price_cols = ['open', 'high', 'low', 'close', 'volume']
+        for col in price_cols:
+            if col not in df.columns:
+                continue
+
+            # Replace inf/-inf with NaN first
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+
+            # Count NaN values before filling
+            nan_count = df[col].isna().sum()
+            if nan_count > 0:
+                logger.warning(
+                    f"Found {nan_count} NaN values in {col} column",
+                    column=col,
+                    nan_count=nan_count
+                )
+
+                # For price columns, use forward fill then backward fill
+                if col in ['open', 'high', 'low', 'close']:
+                    df[col] = df[col].ffill().bfill()
+                    # If still NaN, use previous close for OHLC
+                    if df[col].isna().any():
+                        if col == 'close':
+                            df[col] = df[col].fillna(method='ffill').fillna(method='bfill')
+                        else:
+                            df[col] = df[col].fillna(df['close'])
+                # For volume, fill with 0
+                elif col == 'volume':
+                    df[col] = df[col].fillna(0)
+
+        # Ensure all price columns are positive
+        for col in ['open', 'high', 'low', 'close']:
+            if col in df.columns:
+                df[col] = df[col].clip(lower=1e-8)  # Small positive value to avoid division by zero
+
+        return df
+
     @handle_strategy_errors(notify=True)
     def calculate_indicators(self, df: pd.DataFrame, symbol: str = "", timeframe: str = "") -> pd.DataFrame:
         """Calculate all technical indicators for the strategy.
-        
+
         Args:
             df: DataFrame with OHLCV data
             symbol: Trading pair symbol (for Redis caching)
             timeframe: Timeframe (for Redis caching)
-            
+
         Returns:
             DataFrame with indicators added
         """
@@ -51,19 +94,23 @@ class BollStochStrategy:
                 "Empty DataFrame provided for indicator calculation"
             )
             return df
-            
+
+        # Validate and clean price data first
+        try:
+            df = self._validate_price_data(df)
+        except Exception as e:
+            logger.error(f"Error validating price data: {e}")
+            return df
+
         # Try to get cached indicators if symbol and timeframe are provided
         if symbol and timeframe:
             try:
-                # Import Redis manager here to avoid circular imports
                 from src.utils.redis_manager import redis_manager
-                
-                # Try to get indicators from Redis
+
                 cached_indicators = redis_manager.get_indicators(symbol, timeframe)
                 if cached_indicators is not None:
-                    # Get the timestamps that match our OHLCV data
                     common_timestamps = df.index.intersection(cached_indicators.index)
-                    
+
                     if len(common_timestamps) > 0:
                         logger.info(
                             f"Using cached indicators from Redis",
@@ -72,27 +119,32 @@ class BollStochStrategy:
                             cached_rows=len(common_timestamps),
                             total_rows=len(df)
                         )
-                        
-                        # Merge OHLCV data with cached indicators
+
+                        # Merge only indicator columns that don't exist in df
+                        indicator_cols = [col for col in cached_indicators.columns
+                                        if col not in ['open', 'high', 'low', 'close', 'volume']]
+
                         for ts in common_timestamps:
-                            for col in cached_indicators.columns:
+                            for col in indicator_cols:
                                 if ts in df.index and ts in cached_indicators.index:
                                     df.at[ts, col] = cached_indicators.at[ts, col]
-                        
-                        # If all rows have indicators, return early
-                        missing_rows = len(df) - len(common_timestamps)
-                        if missing_rows == 0:
+
+                        # Verify all indicators were properly merged
+                        missing_indicators = [col for col in indicator_cols
+                                           if col not in df.columns or df[col].isna().all()]
+
+                        if not missing_indicators:
                             return df
-                        else:
-                            logger.debug(
-                                f"Need to calculate indicators for {missing_rows} additional rows",
-                                missing_rows=missing_rows
-                            )
+
+                        logger.debug(
+                            f"Need to calculate {len(missing_indicators)} missing indicators",
+                            missing_indicators=missing_indicators
+                        )
             except Exception as e:
                 logger.warning(f"Error getting cached indicators: {e}")
 
         # Check if we have enough data for calculations
-        min_required_candles = max(self.boll_window, self.ema_window, self.stoch_window) + 10
+        min_required_candles = max(self.boll_window, self.ema_window, self.stoch_window) + 20  # Increased buffer
         if len(df) < min_required_candles:
             logger.warning(
                 f"Not enough data for reliable indicators. Have {len(df)} candles, need at least {min_required_candles}",
@@ -111,94 +163,134 @@ class BollStochStrategy:
         # Make a copy to avoid SettingWithCopyWarning
         df = df.copy()
 
-        # Ensure no NaN in price data
-        if df['close'].isna().any():
-            logger.warning("NaN values found in close prices, forward filling")
-            df['close'] = df['close'].ffill().bfill()  # Forward then backward fill
-
-        # Bollinger Bands
-        bb = BollingerBands(
-            close=df["close"],
-            window=self.boll_window,
-            window_dev=self.boll_std,
-        )
-        df["bb_upper"] = bb.bollinger_hband().ffill()
-        df["bb_middle"] = bb.bollinger_mavg().ffill()
-        df["bb_lower"] = bb.bollinger_lband().ffill()
-
-        # EMA
-        ema = EMAIndicator(close=df["close"], window=self.ema_window)
-        df["ema"] = ema.ema_indicator().ffill()
-
-        # Stochastic RSI
-        stoch = StochRSIIndicator(
-            close=df["close"],
-            window=self.stoch_window,
-            smooth1=self.stoch_smooth_k,
-            smooth2=self.stoch_smooth_d,
-        )
-        df["stoch_k"] = stoch.stochrsi_k().ffill()
-        df["stoch_d"] = stoch.stochrsi_d().ffill()
-
-        # Handle any remaining NaN values
-        indicator_columns = [
-            "bb_upper", "bb_middle", "bb_lower", "ema", "stoch_k", "stoch_d"
-        ]
-
-        # First check how many NaN values we have
-        nan_counts = {col: df[col].isna().sum() for col in indicator_columns}
-        total_nan = sum(nan_counts.values())
-
-        if total_nan > 0:
+        # Ensure we have enough valid data points
+        valid_data_ratio = df['close'].count() / len(df)
+        if valid_data_ratio < 0.8:  # Less than 80% valid data
             logger.warning(
-                f"Total {total_nan} NaN values found in indicators",
-                nan_counts=nan_counts,
-                row_count=len(df),
+                f"Low valid data ratio: {valid_data_ratio:.1%}",
+                valid_ratio=valid_data_ratio
             )
 
-            # Improved NaN handling for each indicator type
-            for col in indicator_columns:
-                if df[col].isna().any():
-                    if col in ["bb_upper", "bb_lower"]:
-                        # For Bollinger Bands, use a multiple of close price
-                        if col == "bb_upper":
-                            # Upper band: close price + 2% as a conservative estimate
-                            df[col] = df[col].fillna(df["close"] * 1.02)
-                        else:
-                            # Lower band: close price - 2% as a conservative estimate
-                            df[col] = df[col].fillna(df["close"] * 0.98)
-                    elif col == "bb_middle":
-                        # For middle band, use close price directly
-                        df[col] = df[col].fillna(df["close"])
-                    elif col == "ema":
-                        # For EMA, use close price or forward fill if available
-                        df[col] = df[col].ffill().fillna(df["close"])
-                    elif col in ["stoch_k", "stoch_d"]:
-                        # For oscillators, use a more sophisticated approach
-                        # First try forward fill, then use 50 as middle value
-                        df[col] = df[col].ffill().fillna(50)
-                    
-                    # Log the filling for debugging
-                    logger.debug(
-                        f"Filled {df[col].isna().sum()} NaN values in {col}",
-                        column=col,
-                        fill_method="custom"
-                    )
+        # Calculate indicators with error handling
+        try:
+            # Bollinger Bands with NaN handling
+            bb = BollingerBands(
+                close=df["close"],
+                window=self.boll_window,
+                window_dev=self.boll_std,
+            )
 
-        # Verify no NaN values remain and handle any that do
+            # Calculate bands with error handling
+            df["bb_middle"] = bb.bollinger_mavg()
+            df["bb_upper"] = bb.bollinger_hband()
+            df["bb_lower"] = bb.bollinger_lband()
+
+            # EMA with error handling
+            try:
+                ema = EMAIndicator(close=df["close"], window=self.ema_window)
+                df["ema"] = ema.ema_indicator()
+            except Exception as e:
+                logger.error(f"Error calculating EMA: {e}")
+                df["ema"] = df["close"].rolling(window=self.ema_window, min_periods=1).mean()
+
+            # Stochastic RSI with error handling
+            try:
+                stoch = StochRSIIndicator(
+                    close=df["close"],
+                    window=self.stoch_window,
+                    smooth1=self.stoch_smooth_k,
+                    smooth2=self.stoch_smooth_d,
+                )
+                df["stoch_k"] = stoch.stochrsi_k()
+                df["stoch_d"] = stoch.stochrsi_d()
+            except Exception as e:
+                logger.error(f"Error calculating Stochastic RSI: {e}")
+                # Fallback to simple RSI if Stochastic fails
+                from ta.momentum import RSIIndicator
+                rsi = RSIIndicator(close=df["close"], window=self.stoch_window)
+                df["stoch_k"] = df["stoch_d"] = rsi.rsi()
+        except Exception as e:
+            logger.critical(f"Critical error in indicator calculation: {e}")
+            # If all else fails, use simple moving averages
+            df["bb_middle"] = df["close"].rolling(window=self.boll_window, min_periods=1).mean()
+            df["bb_upper"] = df["bb_middle"] + df["close"].rolling(window=self.boll_window, min_periods=1).std() * self.boll_std
+            df["bb_lower"] = df["bb_middle"] - df["close"].rolling(window=self.boll_window, min_periods=1).std() * self.boll_std
+            df["ema"] = df["close"].ewm(span=self.ema_window, min_periods=1).mean()
+
+            # Simple RSI as fallback
+            delta = df["close"].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=self.stoch_window).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=self.stoch_window).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            df["stoch_k"] = df["stoch_d"] = rsi
+
+        # Define indicator columns for validation
+        indicator_columns = ["bb_upper", "bb_middle", "bb_lower", "ema", "stoch_k", "stoch_d"]
+
+        # Handle NaN values in each indicator column
+        for col in indicator_columns:
+            if col not in df.columns:
+                # If column is missing, create it with close price as fallback
+                df[col] = df["close"]
+                logger.warning(f"Missing indicator column: {col}, using close price as fallback")
+                continue
+
+            # Replace infinite values
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+
+            # Count NaN values before filling
+            nan_count = df[col].isna().sum()
+            if nan_count > 0:
+                logger.debug(
+                    f"Filling {nan_count} NaN values in {col}",
+                    column=col,
+                    nan_count=nan_count
+                )
+
+                # Special handling for different indicator types
+                if col in ["bb_upper", "bb_lower"]:
+                    # For Bollinger Bands, use a percentage of close price
+                    multiplier = 1.02 if col == "bb_upper" else 0.98
+                    df[col] = df[col].fillna(df["close"] * multiplier)
+                elif col == "bb_middle":
+                    # For middle band, use close price or SMA
+                    df[col] = df[col].fillna(df["close"].rolling(window=self.boll_window, min_periods=1).mean())
+                elif col == "ema":
+                    # For EMA, use close price or SMA
+                    df[col] = df[col].fillna(df["close"].ewm(span=self.ema_window, min_periods=1).mean())
+                elif col in ["stoch_k", "stoch_d"]:
+                    # For oscillators, use 50 as neutral value
+                    df[col] = df[col].fillna(50)
+
+        # Final validation - ensure no NaN values remain
         remaining_nan = {col: df[col].isna().sum() for col in indicator_columns}
-        if sum(remaining_nan.values()) > 0:
-            logger.error(
-                "Failed to remove all NaN values from indicators",
+        if any(remaining_nan.values()):
+            logger.warning(
+                f"Remaining NaN values after filling: {remaining_nan}",
                 remaining_nan=remaining_nan
             )
-            # Instead of dropping rows, use more aggressive filling
+            # Last resort: fill with close price or 50 for oscillators
             for col in indicator_columns:
                 if df[col].isna().any():
-                    # Last resort: use forward fill then backward fill
-                    df[col] = df[col].fillna(method='ffill').fillna(method='bfill')
-                    logger.warning(f"Aggressively filled remaining NaN values in {col}")
-            
+                    if col in ["stoch_k", "stoch_d"]:
+                        df[col] = df[col].fillna(50)
+                    else:
+                        df[col] = df[col].fillna(df["close"])
+
+        # Ensure all indicators are within valid ranges
+        df["stoch_k"] = df["stoch_k"].clip(0, 100)
+        df["stoch_d"] = df["stoch_d"].clip(0, 100)
+
+        # Ensure Bollinger Bands make logical sense
+        mask = df["bb_upper"] <= df["bb_lower"]
+        if mask.any():
+            logger.warning(
+                f"Found {mask.sum()} rows where upper band <= lower band, adjusting...",
+                affected_rows=mask.sum()
+            )
+            df.loc[mask, "bb_upper"] = df.loc[mask, "bb_middle"] + (df.loc[mask, "bb_middle"] - df.loc[mask, "bb_lower"])
+
             # Final check
             final_nan = {col: df[col].isna().sum() for col in indicator_columns}
             if sum(final_nan.values()) > 0:
@@ -215,7 +307,7 @@ class BollStochStrategy:
             try:
                 # Import Redis manager here to avoid circular imports
                 from src.utils.redis_manager import redis_manager
-                
+
                 # Save indicators to Redis
                 redis_manager.save_indicators(symbol, timeframe, df)
                 logger.debug(
@@ -226,7 +318,7 @@ class BollStochStrategy:
                 )
             except Exception as e:
                 logger.warning(f"Error saving indicators to Redis: {e}")
-                
+
         return df
 
     @handle_strategy_errors(notify=False)
@@ -330,7 +422,7 @@ class BollStochStrategy:
             # Check if at least 3 of 4 buy conditions are met (more flexible approach)
             buy_conditions_met = sum(buy_conditions.values())
             sell_conditions_met = sum(sell_conditions.values())
-            
+
             if buy_conditions_met >= 3:  # At least 3 of 4 conditions
                 tf_weight = self._get_timeframe_weight(tf)
                 # Adjust weight based on how many conditions are met
