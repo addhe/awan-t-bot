@@ -7,7 +7,7 @@ import os
 import re
 import json
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime as dt, timedelta
 from pathlib import Path
 
 # Add project root to Python path
@@ -42,7 +42,7 @@ async def extract_confidence_from_logs(monitor):
                                 redis_confidence[symbol] = {
                                     "confidence": signal_dict.get("confidence", 0.0),
                                     "signals_detected": 1 if signal_dict.get("signal") == "buy" else 0,
-                                    "timestamp": signal_dict.get("timestamp", datetime.now().isoformat()),
+                                    "timestamp": signal_dict.get("timestamp", dt.now().isoformat()),
                                     "analyzed_timeframes": signal_dict.get("timeframes", []),
                                     "calculation_method": "redis_signal"
                                 }
@@ -63,7 +63,7 @@ async def extract_confidence_from_logs(monitor):
                 existing_levels[symbol] = data
 
             # Update last updated timestamp
-            existing_levels["last_updated"] = datetime.now().isoformat()
+            existing_levels["last_updated"] = dt.now().isoformat()
 
             # Save to file
             monitor.update_confidence_levels(existing_levels)
@@ -109,7 +109,7 @@ async def extract_confidence_from_logs(monitor):
     symbol_pattern = re.compile(r"Processing pair ([A-Z]+/[A-Z]+|[A-Z]+USDT)")
 
     current_symbol = None
-    cutoff_time = datetime.now() - timedelta(hours=8)  # Extended from 1 hour to 8 hours to capture more data
+    cutoff_time = dt.now() - timedelta(hours=8)  # Extended from 1 hour to 8 hours to capture more data
     print(f"Looking for logs since {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     for line in lines:
@@ -247,7 +247,7 @@ async def extract_confidence_from_logs(monitor):
                 existing_levels[symbol] = data
 
             # Update last updated timestamp
-            existing_levels["last_updated"] = datetime.now().isoformat()
+            existing_levels["last_updated"] = dt.now().isoformat()
 
             # Save to file
             monitor.update_confidence_levels(existing_levels)
@@ -349,9 +349,8 @@ async def update_active_trades_prices(monitor):
                             last_timestamp = df.iloc[-1].name if hasattr(df.iloc[-1], 'name') else None
                             if last_timestamp and isinstance(last_timestamp, (int, float)):
                                 # Convert timestamp to datetime if it's a numeric value
-                                from datetime import datetime
-                                last_update = datetime.fromtimestamp(last_timestamp / 1000)  # Convert ms to seconds
-                                now = datetime.now()
+                                last_update = dt.fromtimestamp(last_timestamp / 1000)  # Convert ms to seconds
+                                now = dt.now()
                                 age_minutes = (now - last_update).total_seconds() / 60
 
                                 if age_minutes < 60:  # Less than 1 hour old
@@ -399,7 +398,7 @@ async def update_active_trades_prices(monitor):
                     "current_price": str(current_price),
                     "quantity": str(trade["quantity"]),
                     "pnl": str(pnl),
-                    "updated_at": datetime.now().isoformat()
+                    "updated_at": dt.now().isoformat()
                 })
                 # Set expiration to 1 day
                 redis_manager.redis.expire(redis_key, 60 * 60 * 24)
@@ -468,7 +467,7 @@ async def async_main():
                 signal, confidence, _ = strategy.analyze_signals(timeframe_data)
                 confidence_data[symbol] = {
                     "confidence": confidence,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": dt.now().isoformat(),
                 }
                 print(f"[PATCH] Updated confidence for {symbol}: {confidence:.2f}")
             else:
@@ -515,13 +514,13 @@ async def async_main():
                             # Update status metrics
                             monitor.update_status_metrics({
                                 "uptime_hours": round(uptime_hours, 2),
-                                "last_updated": datetime.now().isoformat(),
+                                "last_updated": dt.now().isoformat(),
                             })
     except Exception as e:
         print(f"[PATCH] Error updating uptime: {e}")
         # Fallback: gunakan waktu sekarang sebagai last_updated
         monitor.update_status_metrics({
-            "last_updated": datetime.now().isoformat(),
+            "last_updated": dt.now().isoformat(),
         })
         print("[PATCH] Updated last_check to current time")
     # --- END PATCH ---
