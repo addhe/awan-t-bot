@@ -2,8 +2,9 @@
 Position and trade management
 """
 
+import asyncio
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 from src.utils.status_monitor import BotStatusMonitor
 from src.exchange.connector import ExchangeConnector
@@ -40,6 +41,106 @@ class PositionManager:
         # Load active trades from status file
         self._load_active_trades_from_status()
 
+    async def _check_and_apply_dca(self, symbol: str, current_price: float) -> bool:
+        """
+        Check if DCA should be applied and execute if conditions are met
+        
+        Args:
+            symbol: Trading pair symbol
+            current_price: Current market price
+            
+        Returns:
+            bool: True if DCA was applied, False otherwise
+        """
+        try:
+            if not self.config.get('dca', {}).get('enabled', False):
+                return False
+                
+            if symbol not in self.active_trades:
+                return False
+                
+            trade = self.active_trades[symbol]
+            entry_price = trade.get('entry_price', 0)
+            
+            if entry_price <= 0:
+                return False
+                
+            # Calculate price drop percentage
+            price_drop = (entry_price - current_price) / entry_price
+            dca_config = self.config.get('dca', {})
+            
+            # Check if price has dropped enough to trigger DCA
+            if price_drop < dca_config.get('price_drop_percentage', 0.03):
+                return False
+                
+            # Check max DCA levels
+            dca_level = trade.get('dca_level', 0)
+            if dca_level >= dca_config.get('max_dca_levels', 3):
+                logger.info(f"Max DCA levels reached for {symbol}")
+                return False
+                
+            # Check available balance
+            balance = await self.exchange.get_balance('USDT')
+            min_balance_required = dca_config.get('min_balance_required', 0.1) * self.config.get('position_size', 0.02)
+            if balance < min_balance_required:
+                logger.warning(f"Insufficient balance for DCA on {symbol}. Required: {min_balance_required}, Available: {balance}")
+                return False
+                
+            # Calculate DCA position size (increases with each DCA level)
+            base_position_size = self.config.get('position_size', 0.02) * (dca_config.get('dca_multiplier', 1.5) ** dca_level)
+            
+            # Execute DCA order
+            try:
+                order = await self.exchange.create_market_buy_order(
+                    symbol=symbol,
+                    amount=base_position_size,
+                    params={'reduceOnly': False}
+                )
+                
+                if order and order.get('status') == 'filled':
+                    filled_qty = float(order.get('filled', 0))
+                    if filled_qty <= 0:
+                        logger.warning(f"DCA order filled with zero quantity for {symbol}")
+                        return False
+                        
+                    # Update trade with new DCA level and average price
+                    current_qty = trade.get('quantity', 0)
+                    new_quantity = current_qty + filled_qty
+                    
+                    if new_quantity <= 0:
+                        return False
+                        
+                    new_avg_price = (
+                        (trade.get('entry_price', 0) * current_qty) + 
+                        (current_price * filled_qty)
+                    ) / new_quantity
+                    
+                    trade.update({
+                        'entry_price': new_avg_price,
+                        'quantity': new_quantity,
+                        'dca_level': dca_level + 1,
+                        'last_dca_time': datetime.now().isoformat()
+                    })
+                    
+                    logger.info(
+                        f"DCA Level {dca_level + 1} executed for {symbol}",
+                        symbol=symbol,
+                        dca_level=dca_level + 1,
+                        price=current_price,
+                        quantity=filled_qty,
+                        new_avg_price=new_avg_price,
+                        new_quantity=new_quantity
+                    )
+                    return True
+                    
+            except Exception as e:
+                logger.error(f"Error executing DCA order for {symbol}: {str(e)}", exc_info=True)
+                
+        except Exception as e:
+            logger.error(f"Error in _check_and_apply_dca for {symbol}: {str(e)}", exc_info=True)
+            
+        return False
+        
     def _load_active_trades_from_status(self):
         """Load active trades from status file to ensure consistency"""
         try:
@@ -454,6 +555,115 @@ class PositionManager:
         }
 
     @handle_strategy_errors(notify=True)
+    async def _check_and_apply_take_profit(self, symbol: str, current_price: float) -> Dict[str, Any]:
+        """
+        Check and apply take profit levels for a position
+        
+        Args:
+            symbol: Trading pair symbol
+            current_price: Current market price
+            
+        Returns:
+            Dict with take profit execution details or None if no TP triggered
+        """
+        try:
+            if symbol not in self.active_trades:
+                return None
+                
+            trade = self.active_trades[symbol]
+            entry_price = trade.get('entry_price', 0)
+            
+            if entry_price <= 0:
+                return None
+                
+            # Calculate current profit percentage
+            current_profit = (current_price - entry_price) / entry_price
+            
+            # Get take profit levels from config
+            tp_levels = self.config.get('take_profit_levels', [])
+            if not tp_levels:
+                return None
+                
+            # Sort TP levels by profit target (ascending)
+            tp_levels = sorted(tp_levels, key=lambda x: x.get('profit_target', 0))
+            
+            # Find the highest TP level that hasn't been triggered yet
+            for level in tp_levels:
+                if not all(k in level for k in ['profit_target', 'percentage']):
+                    logger.warning(f"Invalid TP level config: {level}")
+                    continue
+                    
+                level_id = f"tp_{int(level['profit_target'] * 100)}%"
+                
+                # Skip if this TP level was already triggered
+                if level_id in trade.get('triggered_tp_levels', []):
+                    continue
+                    
+                # Check if current profit meets or exceeds this TP level
+                if current_profit >= level['profit_target']:
+                    # Calculate quantity to sell at this level
+                    total_quantity = trade.get('quantity', 0)
+                    sell_quantity = total_quantity * level['percentage']
+                    
+                    if sell_quantity <= 0:
+                        continue
+                        
+                    try:
+                        # Execute sell order for this TP level
+                        order = await self.exchange.create_market_sell_order(
+                            symbol=symbol,
+                            amount=sell_quantity,
+                            params={'reduceOnly': True}
+                        )
+                        
+                        if order and order.get('status') == 'filled':
+                            filled_qty = float(order.get('filled', 0))
+                            if filled_qty <= 0:
+                                logger.warning(f"TP order filled with zero quantity for {symbol}")
+                                continue
+                            
+                            # Update position quantity
+                            trade['quantity'] -= filled_qty
+                            
+                            # Mark this TP level as triggered
+                            if 'triggered_tp_levels' not in trade:
+                                trade['triggered_tp_levels'] = []
+                            trade['triggered_tp_levels'].append(level_id)
+                            
+                            # Calculate realized profit
+                            realized_profit = (current_price - entry_price) * filled_qty
+                            remaining_qty = trade['quantity']
+                            
+                            logger.info(
+                                f"Take profit {level_id} triggered for {symbol}",
+                                symbol=symbol,
+                                level=level_id,
+                                price=current_price,
+                                quantity=filled_qty,
+                                realized_profit=realized_profit,
+                                remaining_quantity=remaining_qty
+                            )
+                            
+                            # Return TP execution details
+                            return {
+                                'symbol': symbol,
+                                'level': level_id,
+                                'price': current_price,
+                                'quantity': filled_qty,
+                                'realized_profit': realized_profit,
+                                'remaining_quantity': remaining_qty
+                            }
+                            
+                    except Exception as e:
+                        logger.error(f"Error executing take profit for {symbol} at {level_id}: {str(e)}", exc_info=True)
+                        continue
+                        
+        except Exception as e:
+            logger.error(f"Error in _check_and_apply_take_profit for {symbol}: {str(e)}", exc_info=True)
+                    
+        return None
+        
+    @handle_strategy_errors(notify=True)
     async def check_positions(self, strategy) -> List[Dict[str, Any]]:
         """Check all open positions for exit conditions (SL, TP, Trailing SL, Strategy Signal)"""
         closed_positions = []
@@ -462,18 +672,68 @@ class PositionManager:
         if position_count == 0:
             logger.info("No active positions to check")
             return []
+            
+        # Check for DCA opportunities first before checking exit conditions
+        if self.config.get('dca', {}).get('enabled', False):
+            for symbol in list(self.active_trades.keys()):
+                try:
+                    ticker = await self.exchange.fetch_ticker(symbol)
+                    current_price = ticker.get('last', 0)
+                    if current_price > 0:
+                        dca_applied = await self._check_and_apply_dca(symbol, current_price)
+                        if dca_applied:
+                            # If DCA was applied, refresh the ticker data before proceeding
+                            await asyncio.sleep(1)  # Small delay to ensure order is processed
+                            ticker = await self.exchange.fetch_ticker(symbol)
+                            current_price = ticker.get('last', current_price)
+                except Exception as e:
+                    logger.error(f"Error checking DCA for {symbol}: {str(e)}", exc_info=True)
+                    continue
+        
+        # Check for take profit levels for all active positions
+        active_symbols = list(self.active_trades.keys())
+        for symbol in active_symbols:
+            try:
+                if symbol not in self.active_trades:  # Skip if position was closed in previous iterations
+                    continue
+                    
+                ticker = await self.exchange.fetch_ticker(symbol)
+                current_price = ticker.get('last', 0)
+                if current_price <= 0:
+                    logger.warning(f"Invalid price for {symbol}: {current_price}")
+                    continue
+                
+                # Check and apply take profit levels
+                if self.config.get('take_profit_levels'):
+                    tp_result = await self._check_and_apply_take_profit(symbol, current_price)
+                    if tp_result and tp_result.get('remaining_quantity', 0) <= 0:
+                        # Remove position if fully closed by take profit
+                        self.active_trades.pop(symbol, None)
+                        continue  # Skip to next symbol as this position is closed
+                        
+            except Exception as e:
+                logger.error(f"Error processing take profit for {symbol}: {str(e)}", exc_info=True)
+                continue
 
         # Get excluded symbols from config
         excluded_symbols = self.config.get("excluded_symbols", [])
+        
+        # Filter out positions with zero quantity
+        active_symbols = [s for s, t in self.active_trades.items() if t.get('quantity', 0) > 0]
+        position_count = len(active_symbols)
+        
+        if position_count == 0:
+            return []
+            
+        logger.info(f"Checking {position_count} active positions: {active_symbols}")
 
-        logger.info(f"Checking {position_count} active positions: {list(self.active_trades.keys())}")
-
-        # Get trailing stop config once
+        # Get trading config once
         trailing_stop_enabled = self.config.get("trailing_stop_enabled", False)
         tsl_pct = self.config.get("trailing_stop_pct", 0.01)
         tsl_activation_pct = self.config.get("trailing_stop_activation_pct", 0.01)
         disable_stop_loss = self.config.get("disable_stop_loss", False)
         min_profit_pct = self.config.get("min_profit_pct", 0.03)
+        auto_reinvest = self.config.get('auto_reinvest', {})
         
         for symbol, trade in list(self.active_trades.items()):
             if symbol in excluded_symbols:
@@ -585,6 +845,54 @@ class PositionManager:
 
                 # Calculate current profit percentage
                 current_profit_pct = ((current_price / entry_price) - 1) if entry_price > 0 else 0
+                
+                # Check if we should auto-reinvest profits
+                if (auto_reinvest.get('enabled', False) and 
+                    current_profit_pct >= auto_reinvest.get('min_profit_to_reinvest', 0.02) and
+                    trade.get('reinvest_count', 0) < auto_reinvest.get('max_reinvest_times', 3)):
+                    
+                    # Calculate profit amount to reinvest
+                    profit_amount = (current_price - entry_price) * trade.get('quantity', 0)
+                    reinvest_amount = profit_amount * auto_reinvest.get('reinvest_percentage', 0.5)
+                    
+                    if reinvest_amount > 0:
+                        try:
+                            # Sell portion to realize profit
+                            sell_quantity = (reinvest_amount / current_price) * 0.99  # 1% buffer for fees
+                            try:
+                                order = await self.exchange.create_market_sell_order(
+                                    symbol=symbol,
+                                    amount=sell_quantity,
+                                    params={'reduceOnly': True}
+                                )
+                            except Exception as e:
+                                logger.error(f"Error creating sell order for auto-reinvest: {str(e)}")
+                                order = None
+                            
+                            if order and order.get('status') == 'filled':
+                                # Update position
+                                trade['quantity'] -= float(order['filled'])
+                                trade['reinvest_count'] = trade.get('reinvest_count', 0) + 1
+                                
+                                logger.info(
+                                    f"Auto-reinvested {order['filled']} {symbol} at {current_price}",
+                                    symbol=symbol,
+                                    amount=float(order['filled']),
+                                    price=current_price,
+                                    reinvest_count=trade['reinvest_count']
+                                )
+                                
+                                # Update entry price for remaining position
+                                trade['entry_price'] = (
+                                    (trade.get('entry_price', 0) * trade.get('quantity', 0)) + 
+                                    (current_price * float(order['filled']))
+                                ) / (trade.get('quantity', 0) + float(order['filled']))
+                                
+                                # Update position quantity
+                                trade['quantity'] += float(order['filled'])
+                                
+                        except Exception as e:
+                            logger.error(f"Error during auto-reinvest for {symbol}: {str(e)}")
 
                 # Initialize close reason
                 close_reason = None

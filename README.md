@@ -1,6 +1,15 @@
 # Awan Trading Bot
 
-## Latest Update (2025-05-17)
+## Latest Update (2025-05-18)
+
+Added advanced trading features:
+- **Dollar-Cost Averaging (DCA)**: Automatically buy more when price drops to reduce average entry price
+- **Auto-Reinvestment**: Reinvest a portion of profits back into winning positions
+- **Scaled Take Profit**: Multiple take profit levels with configurable percentages
+- Enhanced position management with better error handling
+- Improved logging for all trading actions
+
+## Update (2025-05-17)
 
 Improved bot notifications and data handling:
 - Fixed error handling for inconsistent data formats (list vs dictionary)
@@ -40,6 +49,47 @@ Major refactoring and code improvements:
 - Implemented structured logging for better debugging
 - Added comprehensive unit tests
 - Improved code maintainability and readability
+
+## New Features Documentation
+
+### 1. Dollar-Cost Averaging (DCA)
+The bot can automatically average down your position when the price drops by a configurable percentage.
+
+**Configuration (in strategy_config.py):**
+```python
+"dca": {
+    "enabled": True,               # Enable/disable DCA
+    "price_drop_percentage": 0.03,  # 3% price drop triggers DCA
+    "max_dca_levels": 3,           # Maximum DCA levels per position
+    "dca_multiplier": 1.5,         # Each DCA level increases position size by 50%
+    "min_balance_required": 0.1    # Minimum 10% balance required for DCA
+}
+```
+
+### 2. Auto-Reinvestment
+Automatically reinvest a portion of profits back into winning positions.
+
+**Configuration (in strategy_config.py):**
+```python
+"auto_reinvest": {
+    "enabled": True,               # Enable/disable auto-reinvest
+    "min_profit_to_reinvest": 0.02,  # Minimum 2% profit before considering reinvestment
+    "reinvest_percentage": 0.5,     # Reinvest 50% of profits
+    "max_reinvest_times": 3         # Maximum number of times to reinvest profits
+}
+```
+
+### 3. Scaled Take Profit
+Take profits at multiple price levels with configurable percentages.
+
+**Configuration (in strategy_config.py):**
+```python
+"take_profit_levels": [
+    {"percentage": 0.3, "profit_target": 0.05},  # Sell 30% at 5% profit
+    {"percentage": 0.3, "profit_target": 0.10},  # Sell 30% at 10% profit
+    {"percentage": 0.4, "profit_target": 0.20}   # Sell 40% at 20% profit
+]
+```
 
 ## Strategy Overview
 
