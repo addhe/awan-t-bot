@@ -13,9 +13,9 @@ import argparse
 from decimal import Decimal
 from pathlib import Path
 
-# Import dari root directory
-from exchange.connector import ExchangeConnector
-from utils.structured_logger import get_logger
+# Import dengan path lengkap untuk Docker environment
+from src.exchange.connector import ExchangeConnector
+from src.utils.structured_logger import get_logger
 from config.settings import EXCHANGE_CONFIG
 
 logger = get_logger("sell_asset")
