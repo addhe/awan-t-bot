@@ -259,49 +259,97 @@ class ExchangeConnector:
                 ...
             }
         """
-        try:
-            account_info = await self._safe_async_call('fetch_balance', {'type': 'future'})  # Adjust based on account type
-        except Exception as e:
-            logger.error(f"Error in fetch_balance: {e}")
-            # Fallback to direct call
-            try:
-                logger.debug("Fallback to direct call for fetch_balance")
-                account_info = self.exchange.fetch_balance({'type': 'future'})  # Adjust based on account type
-            except Exception as e2:
-                logger.error(f"Fallback also failed: {e2}")
-                return {}
-
-
         balances = {}
 
-        # Log raw account info for debugging
-        logger.debug("Raw account info",
-                    info={k: v for k, v in account_info.items()
-                         if k in ['free', 'used', 'total', 'info']})
+        try:
+            # Try with different account types if needed
+            account_types = [None, 'future', 'spot', 'margin']
+            account_info = None
+            last_error = None
 
-        # Process all balances
-        for asset in set(account_info.get('free', {}).keys()) | \
-                     set(account_info.get('used', {}).keys()) | \
-                     set(account_info.get('total', {}).keys()):
+            for account_type in account_types:
+                try:
+                    params = {'type': account_type} if account_type else {}
+                    logger.debug(f"Trying to fetch balance with params: {params}")
+                    account_info = await self._safe_async_call('fetch_balance', params)
 
-            free = float(account_info.get('free', {}).get(asset, 0) or 0)
-            used = float(account_info.get('used', {}).get(asset, 0) or 0)
-            total = float(account_info.get('total', {}).get(asset, 0) or 0)
+                    # If we get here, the call was successful
+                    logger.debug(f"Successfully fetched balance with params: {params}")
+                    break
 
-            # Only include assets with non-zero balance
-            if free > 0 or used > 0 or total > 0:
-                balances[asset] = {
-                    'free': free,
-                    'used': used,
-                    'total': total
-                }
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Failed to fetch balance with params {params}: {e}")
 
-        logger.info(
-            f"Fetched balances for {len(balances)} assets",
-            assets=list(balances.keys()),
-            total_assets=len(balances),
-            usdt_balance=balances.get('USDT', {}).get('total', 0)
-        )
+            # If all attempts failed
+            if account_info is None:
+                logger.error(f"All balance fetch attempts failed. Last error: {last_error}")
+                return {}
+
+            # Log raw account info for debugging (safely)
+            try:
+                debug_info = {k: v for k, v in account_info.items()
+                             if k in ['free', 'used', 'total', 'info'] and v is not None}
+                logger.debug("Raw account info", info=debug_info)
+            except Exception as e:
+                logger.error(f"Error logging account info: {e}")
+
+            # Handle different exchange response formats
+            if not isinstance(account_info, dict):
+                logger.error(f"Unexpected account_info type: {type(account_info)}")
+                return {}
+
+            # Try to extract balances from different possible locations
+            balance_data = None
+            for key in ['info', 'result', 'data']:
+                if key in account_info and isinstance(account_info[key], dict):
+                    balance_data = account_info[key]
+                    break
+
+            # If no nested data found, use the account_info directly
+            balance_data = balance_data or account_info
+
+            # Process all balances
+            free_balances = balance_data.get('free', {}) or {}
+            used_balances = balance_data.get('used', {}) or {}
+            total_balances = balance_data.get('total', {}) or {}
+
+            # Get all asset symbols
+            all_assets = set()
+            for bal_dict in [free_balances, used_balances, total_balances]:
+                if isinstance(bal_dict, dict):
+                    all_assets.update(k for k in bal_dict.keys() if k is not None)
+
+            # Process each asset
+            for asset in all_assets:
+                if not asset:  # Skip None or empty keys
+                    continue
+
+                try:
+                    free = float(free_balances.get(asset, 0) or 0)
+                    used = float(used_balances.get(asset, 0) or 0)
+                    total = float(total_balances.get(asset, 0) or 0)
+
+                    # Only include assets with non-zero balance
+                    if free > 0 or used > 0 or total > 0:
+                        balances[asset] = {
+                            'free': free,
+                            'used': used,
+                            'total': total
+                        }
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error processing balance for {asset}: {e}")
+
+            logger.info(
+                f"Fetched balances for {len(balances)} assets",
+                assets=list(balances.keys()),
+                total_assets=len(balances),
+                usdt_balance=balances.get('USDT', {}).get('total', 0)
+            )
+
+        except Exception as e:
+            logger.error(f"Unexpected error in get_all_balances: {e}", exc_info=True)
+            return {}
 
         return balances
 
