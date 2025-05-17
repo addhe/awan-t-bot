@@ -221,7 +221,7 @@ class TradingBot:
                             # Cache in Redis for future use
                             if self.redis and self.redis.is_connected():
                                 try:
-                                    self.redis.store_ohlcv(symbol, timeframe, df)
+                                    self.redis.save_ohlcv(symbol, timeframe, df)
                                     logger.debug(f"Cached OHLCV data for {symbol} {timeframe} in Redis")
                                 except Exception as e:
                                     logger.error(f"Error caching OHLCV data in Redis: {e}")
