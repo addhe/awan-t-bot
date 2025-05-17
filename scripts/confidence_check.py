@@ -391,12 +391,18 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
     # Combine all confidence data, preferring newer data
     all_confidence = {}
 
-    # --- PATCH: Prioritaskan fresh_confidence_data yang baru dihitung ---
     # Add fresh confidence data first (highest priority)
+    current_time = datetime.now().isoformat()
     for symbol, data in fresh_confidence_data.items():
+        # Ensure all required fields exist
+        data['timestamp'] = current_time
+        if 'calculation_method' not in data:
+            data['calculation_method'] = 'fresh_calculation'
+        if 'analyzed_timeframes' not in data:
+            data['analyzed_timeframes'] = ['1h']  # Default timeframe
+            
         all_confidence[symbol] = data
         print(f"Using fresh confidence data for {symbol}: {data['confidence']:.2f} (just calculated)")
-    # --- END PATCH ---
 
     # Add Redis confidence (if not already added from fresh data)
     for symbol, data in redis_confidence.items():
@@ -419,6 +425,19 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
     # Get current market conditions for each pair
     market_data = {}
     for symbol in trading_pairs:
+        try:
+            # Get current price from exchange
+            exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
+            current_price = await exchange.get_current_price(symbol)
+            
+            # Update market data
+            market_data[symbol] = {
+                'current_price': current_price,
+                'last_updated': datetime.now().isoformat()
+            }
+        except Exception as e:
+            print(f"⚠️ Error getting market data for {symbol}: {e}")
+            market_data[symbol] = {'current_price': None, 'last_updated': None}
         try:
             market_data[symbol] = await get_current_market_conditions(symbol)
         except Exception as e:
@@ -499,7 +518,7 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
                     for cond, value in tf_conditions.items():
                         print(f"    {cond}: {value}")
 
-    # Show active trades
+    # Show active trades with better formatting
     print("\n📊 Active Trades:")
     active_trades = monitor.get_active_trades()
     if active_trades:
@@ -507,7 +526,18 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
             symbol = trade.get("symbol")
             entry_price = trade.get("entry_price")
             current_price = trade.get("current_price")
-            print(f"  {symbol}: Entry {entry_price}, Current {current_price}")
+            
+            # Calculate P/L if we have both prices
+            if entry_price and current_price and float(entry_price) > 0:
+                pnl = ((float(current_price) - float(entry_price)) / float(entry_price)) * 100
+                pnl_str = f"{pnl:+.2f}%"
+            else:
+                pnl_str = "N/A"
+                
+            print(f"  {symbol}:")
+            print(f"    Entry: {float(entry_price):.8f}" if entry_price else "    Entry: N/A")
+            print(f"    Current: {float(current_price):.8f}" if current_price else "    Current: N/A")
+            print(f"    P/L: {pnl_str}")
     else:
         print("  No active trades")
 
