@@ -514,7 +514,20 @@ class TradingBot:
         uptime_hours = (datetime.now() - self.start_time).total_seconds() / 3600
         try:
             balances = await self.exchange.get_all_balances()
-            total_balance = sum(float(balance) for balance in balances.values())
+            total_balance = 0
+            for balance in balances.values():
+                # Handle case where balance is a dictionary with 'free' key
+                if isinstance(balance, dict) and 'free' in balance:
+                    try:
+                        total_balance += float(balance['free'])
+                    except (ValueError, TypeError):
+                        continue
+                # Handle case where balance is a direct numeric value
+                else:
+                    try:
+                        total_balance += float(balance)
+                    except (ValueError, TypeError):
+                        continue
         except Exception as e:
             logger.error(f"Error getting balances: {e}")
             total_balance = 0
