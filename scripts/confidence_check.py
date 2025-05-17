@@ -427,6 +427,8 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
     
     # Get current market conditions for each pair
     market_data = {}
+    exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
+    
     for symbol in trading_pairs:
         try:
             # Get current price from exchange (same method as status_check.py)
@@ -439,18 +441,43 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
             # Update timestamp to current time
             current_time = datetime.now().isoformat()
             
-            # Prepare market data
+            # Prepare market data with fresh price
             market_data[symbol] = {
                 'current_price': current_price,
                 'last_updated': current_time,
                 'confidence': confidence_data.get('confidence', 0.0),
-                'timestamp': current_time,  # Use current time for consistency
+                'timestamp': current_time,
                 'signals_detected': confidence_data.get('signals_detected', 0)
             }
             
-            # Also update the confidence data with current timestamp
+            # Also update the confidence data with current timestamp and price
             if symbol in all_confidence:
-                all_confidence[symbol]['timestamp'] = current_time
+                all_confidence[symbol].update({
+                    'timestamp': current_time,
+                    'current_price': current_price
+                })
+                
+            # Update Redis with fresh price and timestamp
+            try:
+                redis_manager = RedisManager()
+                if redis_manager.is_connected():
+                    # Update price in Redis
+                    price_key = f"price:{symbol}"
+                    redis_manager.redis.set(price_key, str(current_price))
+                    redis_manager.redis.expire(price_key, 60)  # Cache for 1 minute
+                    
+                    # Update confidence data in Redis
+                    if symbol in all_confidence:
+                        conf_key = f"confidence:{symbol}"
+                        redis_manager.redis.hmset(conf_key, {
+                            'symbol': symbol,
+                            'confidence': str(all_confidence[symbol].get('confidence', 0.0)),
+                            'timestamp': current_time,
+                            'current_price': str(current_price)
+                        })
+                        redis_manager.redis.expire(conf_key, 3600)  # Cache for 1 hour
+            except Exception as e:
+                print(f"⚠️ Error updating Redis for {symbol}: {e}")
             
             # Also update Redis with the latest price
             try:
@@ -499,22 +526,37 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
             age_str = "unknown"
             timestamp_str = "N/A"
         
-        # Get current price if available
+        # Get current price - prioritize fresh price from market_data
         current_price = "N/A"
-        if symbol in market_data and market_data[symbol] and market_data[symbol].get('current_price') is not None:
-            try:
+        try:
+            # First try to get from market_data (freshly fetched)
+            if symbol in market_data and market_data[symbol] and 'current_price' in market_data[symbol]:
                 price = float(market_data[symbol]['current_price'])
                 current_price = f"${price:.2f}"
-                
-                # For ETHUSDT, ensure we're using the same price as status_check.py
-                if symbol == 'ETHUSDT':
-                    # Get the price from exchange one more time to be sure
-                    eth_price = await exchange.get_current_price('ETHUSDT')
-                    if eth_price:
-                        current_price = f"${float(eth_price):.2f}"
-                        print(f"Updated ETHUSDT price to: {current_price}")
-            except Exception as e:
-                print(f"⚠️ Error formatting price for {symbol}: {e}")
+                print(f"Using fresh price for {symbol}: {current_price}")
+            # Fallback to exchange if not available
+            else:
+                price = await exchange.get_current_price(symbol)
+                if price:
+                    current_price = f"${float(price):.2f}"
+                    print(f"Fetched fresh price for {symbol}: {current_price}")
+                    
+                    # Update market_data with the fresh price
+                    if symbol not in market_data:
+                        market_data[symbol] = {}
+                    market_data[symbol]['current_price'] = price
+                    market_data[symbol]['last_updated'] = datetime.now().isoformat()
+                    
+        except Exception as e:
+            print(f"⚠️ Error getting price for {symbol}: {e}")
+            # If we have a previous price in all_confidence, use that as fallback
+            if symbol in all_confidence and 'current_price' in all_confidence[symbol]:
+                try:
+                    price = float(all_confidence[symbol]['current_price'])
+                    current_price = f"${price:.2f}"
+                    print(f"Using fallback price for {symbol}: {current_price}")
+                except:
+                    pass
         
         table_data.append([
             f"{symbol} {'⭐' if symbol in fresh_confidence_data else ''}",
@@ -529,6 +571,19 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
     # Print confidence levels table
     print("\n🎯 Confidence Levels Report\n")
     headers = ["Symbol", "Confidence", "Signals", "Timestamp", "Age", "Current Price", "Timeframes"]
+    
+    # Ensure we have prices for all symbols
+    for symbol in trading_pairs:
+        if symbol not in market_data or 'current_price' not in market_data[symbol]:
+            try:
+                price = await exchange.get_current_price(symbol)
+                if symbol not in market_data:
+                    market_data[symbol] = {}
+                market_data[symbol]['current_price'] = price
+                market_data[symbol]['last_updated'] = datetime.now().isoformat()
+                print(f"Fetched missing price for {symbol}: {price}")
+            except Exception as e:
+                print(f"⚠️ Could not fetch price for {symbol}: {e}")
     # --- PATCH: Tambahkan info sumber data ---
     for row in table_data:
         symbol = row[0]
