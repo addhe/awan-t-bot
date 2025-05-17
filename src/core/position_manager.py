@@ -585,51 +585,79 @@ class PositionManager:
                 # Calculate current profit percentage
                 current_profit_pct = ((current_price / entry_price) - 1) if entry_price > 0 else 0
 
-                # Determine trigger conditions using potentially updated SL
-                stop_loss_triggered = (
-                    not disable_stop_loss  # Only check stop loss if not disabled
-                    and trade.get("stop_loss", 0) > 0
-                    and current_price <= trade.get("stop_loss", 0)
-                )
+                # Initialize close reason
+                close_reason = None
 
-                # For take profit, check if price reached take_profit level or minimum profit level if stop loss is disabled
-                take_profit_triggered = (
-                    (trade.get("take_profit", 0) > 0 and current_price >= trade.get("take_profit", 0)) or
-                    (disable_stop_loss and current_profit_pct >= min_profit_pct)  # Close if profit >= min_profit_pct when stop loss disabled
-                )
+                # Determine trigger conditions
+                stop_loss_triggered = False
+                take_profit_triggered = False
+
+                # Check stop loss condition (only if not disabled)
+                if not disable_stop_loss and trade.get("stop_loss", 0) > 0:
+                    if current_price <= trade["stop_loss"]:
+                        stop_loss_triggered = True
+                        close_reason = "stop_loss"
+                        logger.info(
+                            f"Stop loss triggered for {symbol}",
+                            symbol=symbol,
+                            current_price=current_price,
+                            stop_loss=trade["stop_loss"],
+                            pnl=f"{current_profit_pct:.2%}"
+                        )
+
+                # Check take profit condition
+                if not stop_loss_triggered:  # Only check TP if SL not triggered
+                    if disable_stop_loss:
+                        # When stop loss is disabled, use min profit target
+                        if current_profit_pct >= min_profit_pct:
+                            take_profit_triggered = True
+                            close_reason = "min_profit"
+                            logger.info(
+                                f"Min profit target reached for {symbol}",
+                                symbol=symbol,
+                                current_price=current_price,
+                                entry_price=entry_price,
+                                profit_pct=f"{current_profit_pct:.2%}",
+                                min_profit_pct=f"{min_profit_pct:.2%}"
+                            )
+                    elif trade.get("take_profit", 0) > 0 and current_price >= trade["take_profit"]:
+                        take_profit_triggered = True
+                        close_reason = "take_profit"
+                        logger.info(
+                            f"Take profit triggered for {symbol}",
+                            symbol=symbol,
+                            current_price=current_price,
+                            take_profit=trade["take_profit"],
+                            pnl=f"{current_profit_pct:.2%}"
+                        )
 
                 # Close if TP/SL (potentially trailed) or strategy signal triggered
                 if should_sell or stop_loss_triggered or take_profit_triggered:
-                    # Check if this is a min_profit close when stop loss is disabled
-                    min_profit_close = disable_stop_loss and current_profit_pct >= min_profit_pct and not (trade.get("take_profit", 0) > 0 and current_price >= trade.get("take_profit", 0))
+                    # Ensure we have a close reason
+                    if not close_reason:
+                        if should_sell:
+                            close_reason = "signal"
+                        elif stop_loss_triggered:
+                            close_reason = "stop_loss"
+                        elif take_profit_triggered:
+                            close_reason = "min_profit" if disable_stop_loss else "take_profit"
+                        else:
+                            close_reason = "unknown"
 
-                    close_reason = (
-                        "signal"
-                        if should_sell
-                        else (
-                            "stop_loss"
-                            if stop_loss_triggered
-                            else ("min_profit" if min_profit_close else "take_profit")
-                        )
+                    # Log the close action with details
+                    logger.info(
+                        f"Closing {symbol} position - Reason: {close_reason}",
+                        symbol=symbol,
+                        entry_price=entry_price,
+                        current_price=current_price,
+                        profit_pct=f"{current_profit_pct:.2%}",
+                        stop_loss_triggered=stop_loss_triggered,
+                        take_profit_triggered=take_profit_triggered,
+                        should_sell=should_sell,
+                        trailing_stop_updated=trailing_stop_updated
                     )
 
-                    # If SL triggered after trailing stop updated it, maybe log it specially?
-                    if stop_loss_triggered and trailing_stop_updated:
-                        logger.info(f"Closing {symbol} due to triggered Trailing Stop Loss at {stop_loss_price}",
-                                    symbol=symbol, stop_loss_price=stop_loss_price)
-                        # close_reason = "trailing_stop_loss" # Optional more specific reason
-
-                    # Log min profit close with more details
-                    if min_profit_close:
-                        logger.info(
-                            f"Closing {symbol} due to reaching minimum profit target",
-                            symbol=symbol,
-                            entry_price=entry_price,
-                            current_price=current_price,
-                            profit_pct=current_profit_pct,
-                            min_profit_pct=min_profit_pct
-                        )
-
+                    # Execute the close position
                     result = await self.close_position(
                         symbol, close_reason=close_reason
                     )
