@@ -420,71 +420,96 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
             all_confidence[symbol] = data
 
     # Get trading pairs from config
-    trading_pairs = STRATEGY_CONFIG.get("trading_pairs", [])
-
+    trading_pairs = [pair["symbol"] for pair in STRATEGY_CONFIG.get("trading_pairs", [])]
+    
+    # Initialize exchange connector
+    exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
+    
     # Get current market conditions for each pair
     market_data = {}
     for symbol in trading_pairs:
         try:
-            # Get current price from exchange
-            exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
+            # Get current price from exchange (same method as status_check.py)
             current_price = await exchange.get_current_price(symbol)
+            print(f"Fetched price for {symbol} from exchange: {current_price}")
             
-            # Update market data
+            # Get confidence data from Redis (previously updated)
+            confidence_data = all_confidence.get(symbol, {})
+            
+            # Prepare market data
             market_data[symbol] = {
                 'current_price': current_price,
-                'last_updated': datetime.now().isoformat()
+                'last_updated': datetime.now().isoformat(),
+                'confidence': confidence_data.get('confidence', 0.0),
+                'timestamp': confidence_data.get('timestamp', datetime.now().isoformat()),
+                'signals_detected': confidence_data.get('signals_detected', 0)
             }
+            
+            # Also update Redis with the latest price
+            try:
+                redis_manager = RedisManager()
+                if redis_manager.is_connected():
+                    # Update price in Redis
+                    price_key = f"price:{symbol}"
+                    redis_manager.redis.set(price_key, str(current_price))
+                    redis_manager.redis.expire(price_key, 60)  # Cache for 1 minute
+            except Exception as e:
+                print(f"⚠️ Error updating Redis price for {symbol}: {e}")
+                
         except Exception as e:
             print(f"⚠️ Error getting market data for {symbol}: {e}")
-            market_data[symbol] = {'current_price': None, 'last_updated': None}
-        try:
-            market_data[symbol] = await get_current_market_conditions(symbol)
-        except Exception as e:
-            print(f"Error getting market data for {symbol}: {e}")
+            market_data[symbol] = {
+                'current_price': None,
+                'last_updated': None,
+                'confidence': 0.0,
+                'timestamp': datetime.now().isoformat(),
+                'signals_detected': 0
+            }
 
-    # Prepare data for display
+    # Prepare table data
     table_data = []
-    for symbol in sorted(all_confidence.keys()):
-        data = all_confidence[symbol]
-        confidence = data.get("confidence", 0)
-        timestamp = data.get("timestamp", "Unknown")
-        signals = data.get("signals_detected", 0)
-        calculation_method = data.get("calculation_method", "Unknown")
-        analyzed_timeframes = data.get("analyzed_timeframes", [])
-
-        # Format timestamp
+    for symbol, data in all_confidence.items():
+        if symbol == "last_updated":
+            continue
+            
+        # Get timestamp and calculate age
+        timestamp_str = data.get('timestamp')
         try:
-            dt = datetime.fromisoformat(timestamp)
-            formatted_time = dt.strftime("%H:%M:%S")
-            formatted_date = dt.strftime("%Y-%m-%d")
-            age = datetime.now() - dt
-            age_str = f"{int(age.total_seconds() / 60)}m ago"
-        except:
-            formatted_time = "Unknown"
-            formatted_date = "Unknown"
-            age_str = "Unknown"
-
-        # Get market data if available
-        price = "N/A"
-        if symbol in market_data:
-            price = market_data[symbol].get("current_price", "N/A")
-
-        # Add row to table
+            timestamp = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.now()
+            age = datetime.now() - timestamp
+            
+            # Format age
+            if age.total_seconds() < 60:
+                age_str = "just now"
+            else:
+                hours = int(age.total_seconds() // 3600)
+                minutes = int((age.total_seconds() % 3600) // 60)
+                age_str = f"{hours}h {minutes}m ago"
+                
+            timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception as e:
+            print(f"⚠️ Error parsing timestamp for {symbol}: {e}")
+            age_str = "unknown"
+            timestamp_str = "N/A"
+        
+        # Get current price if available
+        current_price = "N/A"
+        if symbol in market_data and market_data[symbol] and market_data[symbol].get('current_price') is not None:
+            current_price = f"${float(market_data[symbol]['current_price']):.2f}"
+        
         table_data.append([
-            symbol,
-            f"{confidence:.2f}",
-            signals,
-            f"{formatted_date} {formatted_time}",
+            f"{symbol} {'⭐' if symbol in fresh_confidence_data else ''}",
+            data.get('confidence', 0.0),
+            data.get('signals_detected', 0),
+            timestamp_str,
             age_str,
-            price,
-            ", ".join(analyzed_timeframes)
+            current_price,
+            ", ".join(data.get('analyzed_timeframes', ['1h'])),
         ])
 
     # Print confidence levels table
     print("\n🎯 Confidence Levels Report\n")
     headers = ["Symbol", "Confidence", "Signals", "Timestamp", "Age", "Current Price", "Timeframes"]
-
     # --- PATCH: Tambahkan info sumber data ---
     for row in table_data:
         symbol = row[0]
