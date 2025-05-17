@@ -436,14 +436,21 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
             # Get confidence data from Redis (previously updated)
             confidence_data = all_confidence.get(symbol, {})
             
+            # Update timestamp to current time
+            current_time = datetime.now().isoformat()
+            
             # Prepare market data
             market_data[symbol] = {
                 'current_price': current_price,
-                'last_updated': datetime.now().isoformat(),
+                'last_updated': current_time,
                 'confidence': confidence_data.get('confidence', 0.0),
-                'timestamp': confidence_data.get('timestamp', datetime.now().isoformat()),
+                'timestamp': current_time,  # Use current time for consistency
                 'signals_detected': confidence_data.get('signals_detected', 0)
             }
+            
+            # Also update the confidence data with current timestamp
+            if symbol in all_confidence:
+                all_confidence[symbol]['timestamp'] = current_time
             
             # Also update Redis with the latest price
             try:
@@ -495,7 +502,19 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
         # Get current price if available
         current_price = "N/A"
         if symbol in market_data and market_data[symbol] and market_data[symbol].get('current_price') is not None:
-            current_price = f"${float(market_data[symbol]['current_price']):.2f}"
+            try:
+                price = float(market_data[symbol]['current_price'])
+                current_price = f"${price:.2f}"
+                
+                # For ETHUSDT, ensure we're using the same price as status_check.py
+                if symbol == 'ETHUSDT':
+                    # Get the price from exchange one more time to be sure
+                    eth_price = await exchange.get_current_price('ETHUSDT')
+                    if eth_price:
+                        current_price = f"${float(eth_price):.2f}"
+                        print(f"Updated ETHUSDT price to: {current_price}")
+            except Exception as e:
+                print(f"⚠️ Error formatting price for {symbol}: {e}")
         
         table_data.append([
             f"{symbol} {'⭐' if symbol in fresh_confidence_data else ''}",
@@ -550,7 +569,15 @@ async def display_confidence_levels(hours=1, detailed=False, update_status=True)
         for trade in active_trades:
             symbol = trade.get("symbol")
             entry_price = trade.get("entry_price")
-            current_price = trade.get("current_price")
+            
+            # Always get fresh price from exchange for active trades
+            current_price = None
+            try:
+                current_price = await exchange.get_current_price(symbol)
+                print(f"Fetched fresh price for active trade {symbol}: {current_price}")
+            except Exception as e:
+                print(f"⚠️ Error getting fresh price for {symbol}: {e}")
+                current_price = trade.get("current_price")
             
             # Calculate P/L if we have both prices
             if entry_price and current_price and float(entry_price) > 0:
