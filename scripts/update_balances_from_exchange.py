@@ -24,35 +24,66 @@ async def update_balances_from_exchange():
         monitor = BotStatusMonitor()
 
         # Get current balances from exchange
-        balances = await exchange.get_all_balances()
+        raw_balances = await exchange.get_all_balances()
 
-        if balances:
-            # Get current status
-            current_status = monitor.get_bot_status() or {}
-
-            # Update balance in status
-            current_status["balance"] = balances
-
-            # Save updated status
-            monitor.update_bot_status(current_status)
-
-            # Print balances
-            print(f"Updated balances for {len(balances)} assets from exchange")
-
-            # Print important balances
-            important_assets = ["USDT", "BTC", "ETH", "SOLO"]
-            for asset in important_assets:
-                if asset in balances:
-                    print(f"{asset} Balance: {balances.get(asset, 0)}")
-
-            return True
-        else:
+        if not raw_balances:
             logger.warning("No balances retrieved from exchange")
-            print("No balances retrieved from exchange")
+            print("❌ No balances retrieved from exchange")
             return False
+
+        # Convert balance format to match expected structure
+        formatted_balances = {}
+        for asset, balance in raw_balances.items():
+            if isinstance(balance, dict):
+                # New format: {'BTC': {'free': 0.1, 'used': 0.0, 'total': 0.1}}
+                formatted_balances[asset] = balance.get('total', 0)
+            else:
+                # Old format: {'BTC': 0.1}
+                formatted_balances[asset] = balance
+
+        # Get current status
+        current_status = monitor.get_bot_status() or {}
+
+        # Update balance in status
+        current_status["balance"] = formatted_balances
+
+        # Save updated status
+        monitor.update_bot_status(current_status)
+
+
+        # Print summary
+        total_assets = len(formatted_balances)
+        print(f"\n✅ Successfully updated balances for {total_assets} assets")
+
+        # Print important balances with emojis
+        important_assets = [
+            ('USDT', '💵'),
+            ('BTC', '₿'),
+            ('ETH', 'Ξ'),
+            ('SOL', '◎'),
+            ('BNB', '🅱️'),
+            ('XRP', '✕'),
+            ('ADA', '₳'),
+            ('DOGE', 'Ð'),
+            ('SOLO', '🦍')
+        ]
+
+        print("\n💼 Balances:")
+        for asset, emoji in important_assets:
+            if asset in formatted_balances and formatted_balances[asset] > 0:
+                print(f"   {emoji} {asset}: {formatted_balances[asset]:.8f}")
+
+        # Print total USDT value if we can calculate it
+        if 'USDT' in formatted_balances:
+            print(f"\n💵 Total USDT: {formatted_balances['USDT']:.2f}")
+
+        return True
+
     except Exception as e:
         logger.error(f"Error updating balances from exchange: {e}", exc_info=True)
-        print(f"Error updating balances from exchange: {e}")
+        print(f"❌ Error updating balances from exchange: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def main():

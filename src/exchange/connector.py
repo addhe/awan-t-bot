@@ -108,7 +108,7 @@ class ExchangeConnector:
         """
         # Import Redis manager here to avoid circular imports
         from src.utils.redis_manager import redis_manager
-        
+
         # Try to get data from Redis first
         cached_df = None
         try:
@@ -124,7 +124,7 @@ class ExchangeConnector:
                 return cached_df.sort_index(ascending=False).head(limit).sort_index()
         except Exception as redis_err:
             logger.warning(f"Error accessing Redis cache: {redis_err}")
-        
+
         # If not in cache or not enough data, fetch from exchange
         logger.info(
             f"Requesting OHLCV data with explicit limit parameter",
@@ -147,7 +147,7 @@ class ExchangeConnector:
                     logger.warning(f"Using partial cached data due to API failure")
                     return cached_df
                 return pd.DataFrame()  # Return empty dataframe on failure
-        
+
         # handle_exchange_errors returns None on failure after retries
         if ohlcv is None:
             logger.warning(
@@ -248,36 +248,61 @@ class ExchangeConnector:
     @rate_limited_api()
     @handle_exchange_errors(notify=True)
     @retry_with_backoff(max_retries=3)
-    async def get_all_balances(self) -> Dict[str, float]:
-        """Get available balances for all assets with rate limiting
+    async def get_all_balances(self) -> Dict[str, Dict[str, float]]:
+        """Get available, used, and total balances for all assets
 
         Returns:
-            Dictionary of asset balances
+            Dictionary containing balance information for each asset:
+            {
+                'BTC': {'free': 0.1, 'used': 0.0, 'total': 0.1},
+                'USDT': {'free': 1000.0, 'used': 0.0, 'total': 1000.0},
+                ...
+            }
         """
         try:
-            account_info = await self._safe_async_call('fetch_balance')
+            account_info = await self._safe_async_call('fetch_balance', {'type': 'future'})  # Adjust based on account type
         except Exception as e:
             logger.error(f"Error in fetch_balance: {e}")
             # Fallback to direct call
             try:
-                logger.debug(f"Fallback to direct call for fetch_balance")
-                account_info = self.exchange.fetch_balance()
+                logger.debug("Fallback to direct call for fetch_balance")
+                account_info = self.exchange.fetch_balance({'type': 'future'})  # Adjust based on account type
             except Exception as e2:
                 logger.error(f"Fallback also failed: {e2}")
-                return {}  # Return empty dict on failure
+                return {}
+
 
         balances = {}
 
-        if "free" in account_info:
-            # Filter out zero balances and format
-            for asset, amount in account_info["free"].items():
-                if amount > 0:
-                    balances[asset] = amount
+        # Log raw account info for debugging
+        logger.debug("Raw account info",
+                    info={k: v for k, v in account_info.items()
+                         if k in ['free', 'used', 'total', 'info']})
+
+        # Process all balances
+        for asset in set(account_info.get('free', {}).keys()) | \
+                     set(account_info.get('used', {}).keys()) | \
+                     set(account_info.get('total', {}).keys()):
+
+            free = float(account_info.get('free', {}).get(asset, 0) or 0)
+            used = float(account_info.get('used', {}).get(asset, 0) or 0)
+            total = float(account_info.get('total', {}).get(asset, 0) or 0)
+
+            # Only include assets with non-zero balance
+            if free > 0 or used > 0 or total > 0:
+                balances[asset] = {
+                    'free': free,
+                    'used': used,
+                    'total': total
+                }
 
         logger.info(
             f"Fetched balances for {len(balances)} assets",
             assets=list(balances.keys()),
+            total_assets=len(balances),
+            usdt_balance=balances.get('USDT', {}).get('total', 0)
         )
+
         return balances
 
     @rate_limited_api()
@@ -290,22 +315,30 @@ class ExchangeConnector:
             asset: Asset symbol (e.g., 'BTC', 'ETH')
 
         Returns:
-            Available balance for the asset or 0 if not found/error
+            Available (free) balance for the asset or 0 if not found/error
         """
         try:
             balances = await self.get_all_balances()
-            available = balances.get(asset, 0)
+            asset_balance = balances.get(asset, {})
+
+            # Get free balance, fallback to 0 if not found
+            available = float(asset_balance.get('free', 0) or 0)
 
             logger.info(
-                f"Available balance for {asset}: {available}",
+                f"Available balance for {asset}",
                 asset=asset,
-                available=available
+                free_balance=available,
+                used_balance=asset_balance.get('used', 0),
+                total_balance=asset_balance.get('total', 0)
             )
 
             return available
         except Exception as e:
-            logger.error(f"Failed to get available balance for {asset}: {e}",
-                      asset=asset, exc_info=True)
+            logger.error(
+                f"Failed to get available balance for {asset}: {e}",
+                asset=asset,
+                exc_info=True
+            )
             return 0
 
     @rate_limited_api()

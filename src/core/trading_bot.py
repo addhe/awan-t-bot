@@ -136,6 +136,28 @@ class TradingBot:
             )
             return False
 
+        # Log balance summary for debugging
+        total_balance = 0
+        non_zero_assets = {}
+        for asset, balance in balances.items():
+            if isinstance(balance, dict):
+                # New format: {'free': 0.1, 'used': 0.0, 'total': 0.1}
+                total = balance.get('total', 0)
+                if total > 0:
+                    non_zero_assets[asset] = total
+                    total_balance += total
+            else:
+                # Old format: 0.1
+                if balance > 0:
+                    non_zero_assets[asset] = balance
+                    total_balance += balance
+
+        logger.info(
+            f"Exchange health check - {len(non_zero_assets)} assets with non-zero balance",
+            total_balance=round(total_balance, 8),
+            assets=non_zero_assets
+        )
+
         # Check rate limiter health
         # TODO: Add rate limiter health check
 
@@ -312,23 +334,46 @@ class TradingBot:
 
             # Execute trade if signal is buy
             if signal == "buy" and confidence >= STRATEGY_CONFIG.get("min_confidence", 0.7):
-                # Check if we have enough balance
-                available_balance = await self.exchange.get_available_balance(
-                    TRADING_CONFIG.get("quote_currency", "USDT")
+                quote_currency = TRADING_CONFIG.get("quote_currency", "USDT")
+
+                # Get available balance with detailed logging
+                available_balance = await self.exchange.get_available_balance(quote_currency)
+                logger.info(
+                    f"Checking balance for {symbol} trade",
+                    symbol=symbol,
+                    available_balance=available_balance,
+                    quote_currency=quote_currency,
+                    current_price=current_price
                 )
 
                 # Calculate position size
-                position_size, _ = self.strategy.calculate_position_size(
-                        available_balance, current_price, pair_config, TRADING_CONFIG
-                    )
-                if position_size * current_price > available_balance:
+                position_size, position_value = self.strategy.calculate_position_size(
+                    available_balance, current_price, pair_config, TRADING_CONFIG
+                )
+
+                # Add 1% buffer for fees and price fluctuations
+                required_balance = position_value * 1.01
+
+                if required_balance > available_balance:
                     logger.warning(
                         f"Insufficient balance for {symbol}",
                         symbol=symbol,
-                        required=position_size * current_price,
-                        available=available_balance,
+                        required_balance=round(required_balance, 8),
+                        available_balance=round(available_balance, 8),
+                        quote_currency=quote_currency,
+                        position_size=position_size,
+                        current_price=current_price
                     )
                     return False
+
+                logger.info(
+                    f"Sufficient balance for {symbol} trade",
+                    symbol=symbol,
+                    position_size=position_size,
+                    position_value=position_value,
+                    available_balance=available_balance,
+                    quote_currency=quote_currency
+                )
 
                 # Execute buy order
                 trade_result = await self.position_manager.open_position(
@@ -569,9 +614,24 @@ class TradingBot:
         # Get balance
         try:
             balances = await self.exchange.get_all_balances()
-            total_balance = sum(float(balance) for balance in balances.values())
+            total_balance = 0
+
+            # Handle both old and new balance formats
+            for asset, balance in balances.items():
+                if isinstance(balance, dict):
+                    # New format: {'free': 0.1, 'used': 0.0, 'total': 0.1}
+                    total_balance += float(balance.get('total', 0))
+                else:
+                    # Old format: 0.1
+                    total_balance += float(balance or 0)
+
+            logger.debug(
+                "Calculated total balance",
+                total_balance=round(total_balance, 8),
+                num_assets=len(balances)
+            )
         except Exception as e:
-            logger.error(f"Error getting balances: {e}")
+            logger.error(f"Error calculating total balance: {e}")
             total_balance = 0
 
         # Update status metrics

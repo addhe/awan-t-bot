@@ -177,7 +177,14 @@ Keeping previous confidence levels if available.
 
 
 async def update_balances_from_exchange(monitor):
-    """Update balances directly from exchange"""
+    """Update balances directly from exchange
+
+    Args:
+        monitor: Instance of BotStatusMonitor
+
+    Returns:
+        bool: True if update was successful, False otherwise
+    """
     try:
         # Initialize exchange connector
         exchange = ExchangeConnector(EXCHANGE_CONFIG, SYSTEM_CONFIG)
@@ -189,20 +196,50 @@ async def update_balances_from_exchange(monitor):
             # Get current status
             current_status = monitor.get_bot_status() or {}
 
+            # Convert balance format to match expected structure
+            formatted_balances = {}
+            for asset, balance in balances.items():
+                if isinstance(balance, dict):
+                    # New format: {'BTC': {'free': 0.1, 'used': 0.0, 'total': 0.1}}
+                    formatted_balances[asset] = balance.get('total', 0)
+                else:
+                    # Old format: {'BTC': 0.1}
+                    formatted_balances[asset] = balance
+
             # Update balance in status
-            current_status["balance"] = balances
+            current_status["balance"] = formatted_balances
 
             # Save updated status
             monitor.update_bot_status(current_status)
 
-            print(f"Updated balances for {len(balances)} assets from exchange")
-            print(f"USDT Balance: {balances.get('USDT', 0)}")
+
+            # Log detailed balance information
+            total_assets = len(formatted_balances)
+            usdt_balance = formatted_balances.get('USDT', 0)
+
+            print(f"✅ Updated balances for {total_assets} assets from exchange")
+            print(f"💵 USDT Balance: {usdt_balance:.8f}")
+
+            # Log other significant balances
+            significant_assets = [
+                'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOT',
+                'DOGE', 'AVAX', 'MATIC', 'LTC', 'LINK', 'UNI', 'ATOM'
+            ]
+
+            print("\n💼 Other Balances:")
+            for asset in significant_assets:
+                if asset in formatted_balances and formatted_balances[asset] > 0:
+                    print(f"   {asset}: {formatted_balances[asset]:.8f}")
+
             return True
         else:
-            print("No balances retrieved from exchange")
+            print("❌ No balances retrieved from exchange")
             return False
+
     except Exception as e:
-        print(f"Error updating balances from exchange: {e}")
+        print(f"❌ Error updating balances from exchange: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -220,6 +257,14 @@ async def update_active_trades_prices(monitor):
     # Get current balances to check if positions still exist
     balances = await exchange.get_all_balances()
 
+    # Convert balances to simple format if needed
+    simple_balances = {}
+    for asset, balance in balances.items():
+        if isinstance(balance, dict):
+            simple_balances[asset] = balance.get('total', 0)
+        else:
+            simple_balances[asset] = balance
+
     updated_trades = []
     for trade in trades:
         symbol = trade.get("symbol")
@@ -233,10 +278,10 @@ async def update_active_trades_prices(monitor):
             base_currency = symbol.replace("USDT", "")
 
             # Skip positions where the base currency balance is too low
-            if base_currency and base_currency in balances:
+            if base_currency and base_currency in simple_balances:
                 min_balance = 0.0001  # Minimum balance threshold
-                if balances.get(base_currency, 0) < min_balance:
-                    print(f"Skipping {symbol} as position appears to be closed ({base_currency} balance too low)")
+                if simple_balances.get(base_currency, 0) < min_balance:
+                    print(f"⏭️  Skipping {symbol} - position appears to be closed ({base_currency} balance too low)")
                     continue
 
             # Try to get price from Redis first
