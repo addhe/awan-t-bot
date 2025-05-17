@@ -560,27 +560,28 @@ class PositionManager:
                 # Check if stop loss is disabled in config
                 disable_stop_loss = self.config.get("disable_stop_loss", False)
                 min_profit_pct = self.config.get("min_profit_pct", 0.03)  # Default 3%
-
-                # If stop_loss is not set or 0 and stop loss is not disabled, calculate it based on config
-                if not disable_stop_loss and trade.get("stop_loss", 0) == 0 and entry_price > 0:
+                
+                # Handle stop loss configuration
+                if disable_stop_loss:
+                    # If stop loss is disabled, ensure it's set to 0
+                    if trade.get("stop_loss", 0) > 0:
+                        logger.info(
+                            f"Stop loss disabled in config, removing stop_loss for {symbol}",
+                            symbol=symbol
+                        )
+                        trade["stop_loss"] = 0
+                elif trade.get("stop_loss", 0) == 0 and entry_price > 0:
+                    # If stop loss is not set and not disabled, calculate it
                     stop_loss_pct = self.config.get("stop_loss_pct", 0.02)  # Default 2%
                     stop_loss_price = entry_price * (1 - stop_loss_pct)
                     logger.info(
-                        f"Setting missing stop_loss_price for {symbol}",
+                        f"Setting stop_loss for {symbol}",
                         symbol=symbol,
                         entry_price=entry_price,
                         stop_loss_pct=stop_loss_pct,
                         stop_loss_price=stop_loss_price
                     )
-                    # Update the trade with the calculated stop_loss_price
                     trade["stop_loss"] = stop_loss_price
-                elif disable_stop_loss and trade.get("stop_loss", 0) > 0:
-                    # If stop loss was previously set but now disabled, remove it
-                    logger.info(
-                        f"Stop loss disabled in config, removing stop_loss for {symbol}",
-                        symbol=symbol
-                    )
-                    trade["stop_loss"] = 0
 
                 # Calculate current profit percentage
                 current_profit_pct = ((current_price / entry_price) - 1) if entry_price > 0 else 0
@@ -604,6 +605,13 @@ class PositionManager:
                             stop_loss=trade["stop_loss"],
                             pnl=f"{current_profit_pct:.2%}"
                         )
+                else:
+                    logger.debug(
+                        f"Stop loss check skipped for {symbol} - {'disabled' if disable_stop_loss else 'not set'}",
+                        symbol=symbol,
+                        disable_stop_loss=disable_stop_loss,
+                        has_stop_loss=trade.get("stop_loss", 0) > 0
+                    )
 
                 # Check take profit condition
                 if not stop_loss_triggered:  # Only check TP if SL not triggered
