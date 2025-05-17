@@ -13,7 +13,7 @@ from pathlib import Path
 from tabulate import tabulate
 
 # Add project root to Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils.status_monitor import BotStatusMonitor
 from src.exchange.connector import ExchangeConnector
