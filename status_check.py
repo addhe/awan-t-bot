@@ -330,23 +330,49 @@ async def update_active_trades_prices(monitor):
                     print(f"Skipping {symbol} as position appears to be closed ({base_currency} balance too low)")
                     continue
 
-            # Try to get current price from Redis first
-            current_price = None
+            # Always fetch current price from exchange for accuracy
             try:
-                # Get the most recent OHLCV data from Redis
-                for timeframe in ['1m', '5m', '15m', '1h']:
-                    df = redis_manager.get_ohlcv(symbol, timeframe)
-                    if df is not None and not df.empty:
-                        current_price = df.iloc[-1]['close']
-                        print(f"Using cached price for {symbol} from Redis ({timeframe}): {current_price}")
-                        break
-            except Exception as e:
-                print(f"Error getting price from Redis for {symbol}: {e}")
-
-            # If not found in Redis, fetch from exchange
-            if current_price is None:
                 current_price = await exchange.get_current_price(symbol)
                 print(f"Fetched price for {symbol} from exchange: {current_price}")
+            except Exception as exchange_error:
+                print(f"Error fetching price from exchange for {symbol}: {exchange_error}")
+
+                # Fallback to Redis only if exchange fetch fails
+                current_price = None
+                try:
+                    # Get the most recent OHLCV data from Redis
+                    for timeframe in ['1m', '5m', '15m', '1h']:
+                        df = redis_manager.get_ohlcv(symbol, timeframe)
+                        if df is not None and not df.empty:
+                            # Check if data is fresh (less than 1 hour old)
+                            last_timestamp = df.iloc[-1].name if hasattr(df.iloc[-1], 'name') else None
+                            if last_timestamp and isinstance(last_timestamp, (int, float)):
+                                # Convert timestamp to datetime if it's a numeric value
+                                from datetime import datetime
+                                last_update = datetime.fromtimestamp(last_timestamp / 1000)  # Convert ms to seconds
+                                now = datetime.now()
+                                age_minutes = (now - last_update).total_seconds() / 60
+
+                                if age_minutes < 60:  # Less than 1 hour old
+                                    current_price = df.iloc[-1]['close']
+                                    print(f"Using cached price for {symbol} from Redis ({timeframe}, {age_minutes:.1f} min old): {current_price}")
+                                    break
+                                else:
+                                    print(f"Cached price for {symbol} is too old ({age_minutes:.1f} min), skipping")
+                            else:
+                                # If we can't determine age, use the data anyway as last resort
+                                current_price = df.iloc[-1]['close']
+                                print(f"Using cached price for {symbol} from Redis ({timeframe}, unknown age): {current_price}")
+                                break
+                except Exception as redis_error:
+                    print(f"Error getting price from Redis for {symbol}: {redis_error}")
+
+                # If still no price, use a default or log an error
+                if current_price is None:
+                    print(f"⚠️ Could not get current price for {symbol} from any source")
+                    # Use the last known price from the trade data if available
+                    current_price = trade.get("current_price", trade.get("entry_price", 0))
+                    print(f"Using last known price for {symbol}: {current_price}")
 
             entry_price = trade["entry_price"]
             pnl = 0.0
