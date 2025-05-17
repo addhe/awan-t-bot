@@ -321,10 +321,14 @@ async def update_active_trades_prices(monitor):
             if current_price is None:
                 # Always fetch from exchange first
                 try:
-                    ticker = await exchange.fetch_ticker(symbol)
+                    ticker = await exchange.get_ticker(symbol)
                     if ticker and "last" in ticker:
                         current_price = ticker["last"]
                         print(f"Fetched price for {symbol} from exchange: {current_price}")
+                    else:
+                        print(f"Warning: No price data for {symbol} from exchange")
+                        current_price = trade.get("current_price", entry_price)
+                        print(f"Using last known price for {symbol}: {current_price}")
                 except Exception as e:
                     print(f"Error fetching price from exchange: {e}")
                     # Try to use the last price from the trade if available
