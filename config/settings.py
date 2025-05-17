@@ -22,6 +22,14 @@ TRADING_PAIRS = [
         "max_position_qty": 0.01,
         "timeframes": ["1h", "4h"],
     },
+    {
+        "symbol": "SOLUSDT",
+        "min_quantity": 0.01,
+        "price_precision": 2,
+        "quantity_precision": 3,
+        "max_position_qty": 1.0,
+        "timeframes": ["1h", "4h"],
+    },
 ]
 
 # Strategy configuration
