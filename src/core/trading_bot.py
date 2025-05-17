@@ -364,13 +364,14 @@ class TradingBot:
                     current_price=current_price
                 )
 
-                # Calculate position size
-                position_size, position_value = self.strategy.calculate_position_size(
+                # Calculate position size and get allocation info
+                position_size, allocation_info = self.strategy.calculate_position_size(
                     available_balance, current_price, pair_config, TRADING_CONFIG
                 )
+                position_value = allocation_info.get('allocation_usdt', 0)
 
                 # Add 1% buffer for fees and price fluctuations
-                required_balance = position_value * 1.01
+                required_balance = position_value * 1.01 if position_value else 0
 
                 if required_balance > available_balance:
                     logger.warning(
