@@ -22,20 +22,23 @@ from config.settings import EXCHANGE_CONFIG, SYSTEM_CONFIG
 
 logger = get_logger("sell_asset")
 
-async def get_ticker_info(exchange, symbol):
-    """Get ticker information for a symbol"""
+async def get_current_price(exchange, symbol):
+    """Get current price for a symbol"""
     try:
-        ticker = await exchange.get_ticker(f"{symbol}USDT")
-        return ticker
+        # Use fetch_ticker method which is available in ExchangeConnector
+        ticker = await exchange.fetch_ticker(f"{symbol}USDT")
+        if ticker and 'last' in ticker:
+            return Decimal(str(ticker['last']))
+        return Decimal('0')
     except Exception as e:
-        logger.error(f"Error getting ticker for {symbol}USDT: {e}")
-        return None
+        logger.error(f"Error getting price for {symbol}USDT: {e}")
+        return Decimal('0')
 
 async def get_balance(exchange, asset):
     """Get balance for a specific asset"""
     try:
         balances = await exchange.get_all_balances()
-        return Decimal(balances.get(asset, '0'))
+        return Decimal(str(balances.get(asset, '0')))
     except Exception as e:
         logger.error(f"Error getting balance for {asset}: {e}")
         return Decimal('0')
@@ -48,8 +51,7 @@ async def sell_asset(symbol, amount=None, sell_all=False):
         system_config=SYSTEM_CONFIG
     )
     
-    # Connect to exchange
-    await exchange.connect()
+    # ExchangeConnector doesn't have a connect() method, it's initialized automatically
     
     # Get balance
     balance = await get_balance(exchange, symbol)
@@ -63,18 +65,12 @@ async def sell_asset(symbol, amount=None, sell_all=False):
     # Determine amount to sell
     sell_amount = balance if sell_all else (amount if amount is not None else balance)
     
-    # Get ticker info
+    # Get current price
     market_symbol = f"{symbol}USDT"
-    ticker = await get_ticker_info(exchange, symbol)
-    
-    if not ticker:
-        logger.error(f"Could not get ticker information for {market_symbol}")
-        return
-    
-    current_price = Decimal(ticker.get('last', '0'))
+    current_price = await get_current_price(exchange, symbol)
     
     if current_price == 0:
-        logger.error(f"Invalid price for {market_symbol}")
+        logger.error(f"Could not get current price for {market_symbol}")
         return
     
     logger.info(f"Current price for {market_symbol}: {current_price} USDT")
@@ -92,9 +88,10 @@ async def sell_asset(symbol, amount=None, sell_all=False):
     
     # Execute sell order
     try:
-        order = await exchange.create_market_sell_order(
+        # Use place_market_sell method which is available in ExchangeConnector
+        order = await exchange.place_market_sell(
             symbol=market_symbol,
-            amount=float(sell_amount)
+            quantity=float(sell_amount)
         )
         
         logger.info(f"Sell order executed successfully: {order}")
