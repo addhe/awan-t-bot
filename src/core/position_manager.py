@@ -677,14 +677,14 @@ class PositionManager:
         if self.config.get('dca', {}).get('enabled', False):
             for symbol in list(self.active_trades.keys()):
                 try:
-                    ticker = await self.exchange.fetch_ticker(symbol)
+                    ticker = await self.exchange.exchange.fetch_ticker(symbol)
                     current_price = ticker.get('last', 0)
                     if current_price > 0:
                         dca_applied = await self._check_and_apply_dca(symbol, current_price)
                         if dca_applied:
                             # If DCA was applied, refresh the ticker data before proceeding
                             await asyncio.sleep(1)  # Small delay to ensure order is processed
-                            ticker = await self.exchange.fetch_ticker(symbol)
+                            ticker = await self.exchange.exchange.fetch_ticker(symbol)
                             current_price = ticker.get('last', current_price)
                 except Exception as e:
                     logger.error(f"Error checking DCA for {symbol}: {str(e)}", exc_info=True)
@@ -697,7 +697,7 @@ class PositionManager:
                 if symbol not in self.active_trades:  # Skip if position was closed in previous iterations
                     continue
                     
-                ticker = await self.exchange.fetch_ticker(symbol)
+                ticker = await self.exchange.exchange.fetch_ticker(symbol)
                 current_price = ticker.get('last', 0)
                 if current_price <= 0:
                     logger.warning(f"Invalid price for {symbol}: {current_price}")
