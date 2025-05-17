@@ -263,19 +263,19 @@ class TradingBot:
             current_price = await self.exchange.get_current_price(symbol)
 
             # Analyze for signals
-            # Pastikan ohlcv_data dalam format yang diharapkan (dictionary dengan timeframes sebagai key)
+            # Ensure ohlcv_data is in the expected format (dictionary with timeframes as keys)
             if not ohlcv_data:
                 logger.error(f"No OHLCV data available for {symbol}")
                 return False
 
-            # Hitung indikator teknikal untuk setiap timeframe sebelum analisis
+            # Calculate technical indicators for each timeframe before analysis
             ohlcv_data_with_indicators = {}
             for tf, df in ohlcv_data.items():
                 try:
-                    # Hitung indikator menggunakan metode calculate_indicators
+                    # Calculate indicators using calculate_indicators method
                     df_with_indicators = self.strategy.calculate_indicators(df, symbol, tf)
                     if df_with_indicators is not None and not df_with_indicators.empty:
-                        # Pastikan semua indikator yang diperlukan ada
+                        # Ensure all required indicators are present
                         required_indicators = ['close', 'bb_upper', 'bb_lower', 'bb_middle', 'ema', 'stoch_k', 'stoch_d']
                         if all(indicator in df_with_indicators.columns for indicator in required_indicators):
                             ohlcv_data_with_indicators[tf] = df_with_indicators
@@ -286,11 +286,15 @@ class TradingBot:
                 except Exception as e:
                     logger.error(f"Error calculating indicators for {symbol} {tf}: {e}")
 
-            # Jika tidak ada data dengan indikator, keluar
+            # If no data with indicators, exit
             if not ohlcv_data_with_indicators:
                 logger.error(f"Failed to calculate indicators for {symbol} from any timeframe")
                 return False
 
+            # Store the original ohlcv_data for later use in trade execution
+            self._last_ohlcv_data = ohlcv_data
+            
+            # Analyze signals with the indicator data
             signal, confidence, indicators = self.strategy.analyze_signals(ohlcv_data_with_indicators)
 
             # Save signal to Redis
@@ -306,17 +310,26 @@ class TradingBot:
                 except Exception as e:
                     logger.error(f"Error saving signal to Redis: {e}")
 
-            # Log signal
-            logger.info(
-                f"Signal analysis for {symbol}: {signal}",
-                symbol=symbol,
-                signal=signal,
-                confidence=f"{confidence:.2f}",
-                price=current_price,
-                timeframe_conditions={
-                    tf: indicators.get(tf, {}) for tf in ohlcv_data.keys()
-                },
-            )
+            # Log signal with proper error handling for timeframe conditions
+            try:
+                timeframe_conditions = {}
+                if hasattr(self, '_last_ohlcv_data') and self._last_ohlcv_data is not None:
+                    timeframe_conditions = {
+                        tf: indicators.get(tf, {}) for tf in self._last_ohlcv_data.keys()
+                    }
+                else:
+                    logger.warning(f"No OHLCV data available for {symbol} when logging signal")
+                
+                logger.info(
+                    f"Signal analysis for {symbol}: {signal}",
+                    symbol=symbol,
+                    signal=signal,
+                    confidence=f"{confidence:.2f}",
+                    price=current_price,
+                    timeframe_conditions=timeframe_conditions,
+                )
+            except Exception as e:
+                logger.error(f"Error logging signal for {symbol}: {e}", exc_info=True)
 
             # --- PATCH: Selalu update confidence level setelah analisa sinyal ---
             confidence_data = {
@@ -334,6 +347,11 @@ class TradingBot:
 
             # Execute trade if signal is buy
             if signal == "buy" and confidence >= STRATEGY_CONFIG.get("min_confidence", 0.7):
+                # Ensure we have valid OHLCV data for trade execution
+                if not hasattr(self, '_last_ohlcv_data') or self._last_ohlcv_data is None:
+                    logger.error(f"Cannot execute trade for {symbol}: No OHLCV data available")
+                    return False
+                    
                 quote_currency = TRADING_CONFIG.get("quote_currency", "USDT")
 
                 # Get available balance with detailed logging
